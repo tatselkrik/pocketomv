@@ -1,0 +1,40 @@
+.gradle/
+.kotlin/
+.idea/
+**/build/
+local.properties
+*.iml
+
+# Local configuration and working notes
+.env
+.env.*
+!.env.example
+.agents/
+.codex/
+.codex-remote-attachments/
+.codex-checkpoints/
+AGENTS.md
+memory.md
+memory.archive.md
+work/
+tmp/
+*.log
+captures/
+.DS_Store
+Thumbs.db
+
+# Signing material and generated installers
+*.jks
+*.keystore
+keystore.properties
+*.apk
+*.aab
+
+# Local datasets and exports
+*.csv
+*.tsv
+*.xlsx
+*.xls
+*.omv
+*.sav
+!app/src/test/resources/**
