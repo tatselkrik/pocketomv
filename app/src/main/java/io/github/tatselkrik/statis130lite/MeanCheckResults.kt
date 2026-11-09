@@ -19,6 +19,7 @@ internal fun MeanCheckOptions(request: AnalysisRequest, enabled: Boolean, onChan
         Text(when (request.method) {
             AnalysisMethod.PAIRED_T -> "Checks the differences within complete pairs."
             AnalysisMethod.ONE_SAMPLE_T -> "Checks the selected sample's distribution."
+            AnalysisMethod.FACTORIAL_ANOVA, AnalysisMethod.ANCOVA -> "Checks fitted-model residuals across the same complete observations."
             else -> "Checks the outcome separately within each group."
         }, style = MaterialTheme.typography.bodySmall)
         if (request.method.supportsVarianceCheck) {
@@ -74,6 +75,12 @@ internal fun LazyListScope.meanCheckItems(result: AnalysisResult) {
             Text(followUp.unavailable)
         }
         Text(followUp.note, style = MaterialTheme.typography.bodySmall)
+    } }
+    result.assumptionChecks.filter { it.name != "Shapiro–Wilk" && it.name != "Levene (median)" }.forEach { check -> item {
+        TitledTable(check.name, listOf("Sample", "N", "Statistic", "df", "p"), listOf(listOf(check.sample, check.size.toString(),
+            check.test?.let { "${it.label} = ${formatStatistic(it.statistic)}" } ?: "Unavailable",
+            check.degreesOfFreedom.joinToString { formatStatistic(it) }, check.test?.pValue?.let(::formatProbability) ?: "—")))
+        check.note?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
     } }
 }
 

@@ -9,7 +9,7 @@ enum class AnalysisMethod(
     val secondLabel: String? = null,
     val directional: Boolean = false,
 ) {
-    DESCRIPTIVES("Descriptives", "Summarize a variable with statistics, frequencies and a histogram.", "Variable"),
+    DESCRIPTIVES("Descriptives", "Summarize selected variables, optionally split by a group.", "Variable"),
     ONE_SAMPLE_T("One-sample t test", "Compare a sample mean with a specified value.", "Sample values", directional = true),
     INDEPENDENT_T("Independent-samples t test", "Compare means from two independent groups.", "Outcome", "Group", true),
     PAIRED_T("Paired-samples t test", "Compare means from two measurements on the same cases.", "First measurement", "Second measurement", true),
@@ -19,24 +19,33 @@ enum class AnalysisMethod(
     KRUSKAL_WALLIS("Kruskal–Wallis H", "Compare ranks across independent groups.", "Outcome", "Group"),
     CHI_GOODNESS("Chi-square goodness of fit", "Compare observed category counts with expected proportions.", "Category"),
     CHI_INDEPENDENCE("Chi-square independence", "Test for an association between two categorical variables.", "Row category", "Column category"),
+    FISHER_EXACT("Fisher's exact test (2 × 2)", "Test association in a two-by-two table using exact conditional probabilities.", "Row category", "Column category", true),
     PEARSON("Pearson correlation", "Measure the strength and direction of a linear association.", "First variable", "Second variable", true),
     SPEARMAN("Spearman correlation", "Measure a monotonic association using average ranks for ties.", "First variable", "Second variable", true),
+    CORRELATION_MATRIX("Correlation matrix", "Examine correlations among several numeric variables in one table.", "Variables"),
     REGRESSION("Simple linear regression", "Predict an outcome from one numeric variable.", "Predictor", "Outcome"),
     RELIABILITY("Reliability analysis", "Estimate internal consistency and inspect item diagnostics.", "Items"),
     MULTIPLE_REGRESSION("Multiple linear regression", "Model an outcome using simultaneous numeric predictors.", "Outcome"),
     REPEATED_ANOVA("Repeated-measures ANOVA", "Compare conditions of one within-subject factor; one column per condition.", "Conditions"),
+    FRIEDMAN("Friedman test", "Compare ranks across repeated measurements of the same participants.", "Conditions"),
+    FACTORIAL_ANOVA("Factorial ANOVA", "Compare independent groups using two or three categorical factors and their interactions.", "Outcome"),
+    ANCOVA("ANCOVA", "Compare categorical factors while adjusting for continuous covariates.", "Outcome"),
+    EFA("Exploratory factor analysis", "Explore common factors among numeric items, with adequacy checks and factor retention.", "Variables"),
     ;
 
-    val usesCounts: Boolean get() = this == CHI_GOODNESS || this == CHI_INDEPENDENCE
+    val usesCounts: Boolean get() = this in setOf(CHI_GOODNESS, CHI_INDEPENDENCE, FISHER_EXACT)
     val usesGroups: Boolean get() = this in groupedMethods
     val usesVarianceChoice: Boolean get() = this == INDEPENDENT_T || this == ANOVA
-    val supportsNormalityCheck: Boolean get() = this in setOf(ONE_SAMPLE_T, INDEPENDENT_T, PAIRED_T, ANOVA, MULTIPLE_REGRESSION)
-    val supportsVarianceCheck: Boolean get() = this == INDEPENDENT_T || this == ANOVA
-    val supportsBoxplot: Boolean get() = this == DESCRIPTIVES || this == REPEATED_ANOVA || (supportsNormalityCheck && this != MULTIPLE_REGRESSION) ||
+    val isFactorialModel: Boolean get() = this == FACTORIAL_ANOVA || this == ANCOVA
+    val usesResiduals: Boolean get() = this == MULTIPLE_REGRESSION || isFactorialModel
+    val supportsNormalityCheck: Boolean get() = this in setOf(ONE_SAMPLE_T, INDEPENDENT_T, PAIRED_T, ANOVA, MULTIPLE_REGRESSION) || isFactorialModel
+    val supportsVarianceCheck: Boolean get() = this == INDEPENDENT_T || this == ANOVA || isFactorialModel
+    val supportsBoxplot: Boolean get() = this == DESCRIPTIVES || this == REPEATED_ANOVA || this == FRIEDMAN || (supportsNormalityCheck && !usesResiduals) ||
         this in setOf(MANN_WHITNEY, WILCOXON, KRUSKAL_WALLIS)
     val supportsQQPlot: Boolean get() = this == DESCRIPTIVES || supportsNormalityCheck
-    val supportsScatterplot: Boolean get() = this in setOf(PEARSON, SPEARMAN, REGRESSION, MULTIPLE_REGRESSION)
-    val usesItemSelection: Boolean get() = this == RELIABILITY || this == REPEATED_ANOVA
+    val supportsScatterplot: Boolean get() = this in setOf(PEARSON, SPEARMAN, REGRESSION, MULTIPLE_REGRESSION) || isFactorialModel
+    val usesItemSelection: Boolean get() = this in setOf(RELIABILITY, REPEATED_ANOVA, FRIEDMAN, EFA)
+    val usesVariableSelection: Boolean get() = usesItemSelection || this == DESCRIPTIVES || this == CORRELATION_MATRIX
 
     companion object {
         private val groupedMethods = setOf(INDEPENDENT_T, ANOVA, MANN_WHITNEY, KRUSKAL_WALLIS)
@@ -51,6 +60,16 @@ enum class Tail(val label: String, val hypothesis: AlternativeHypothesis) {
 
 enum class RepeatedCorrection(val label: String) {
     GREENHOUSE_GEISSER("Greenhouse–Geisser"), HUYNH_FELDT("Huynh–Feldt"), NONE("Uncorrected"),
+}
+
+enum class CorrelationKind(val label: String) { PEARSON("Pearson r"), SPEARMAN("Spearman rho") }
+enum class CorrelationMissing(val label: String) {
+    PAIRWISE("Pairwise · available rows for each pair"),
+    LISTWISE("Listwise · complete rows across all selected variables"),
+}
+
+enum class FriedmanAdjustment(val label: String) {
+    HOLM("Holm"), BONFERRONI("Bonferroni"), NONE("Unadjusted"),
 }
 
 data class AnalysisRequest(
@@ -79,6 +98,35 @@ data class AnalysisRequest(
     val showItemCorrelations: Boolean = false,
     val repeatedCorrection: RepeatedCorrection = RepeatedCorrection.GREENHOUSE_GEISSER,
     val repeatedComparisons: Boolean = false,
+    val descriptiveVariables: List<Int>? = null,
+    val splitBy: Int? = null,
+    val showBarChart: Boolean = false,
+    val correlationVariables: List<Int> = emptyList(),
+    val correlationKind: CorrelationKind = CorrelationKind.PEARSON,
+    val correlationMissing: CorrelationMissing = CorrelationMissing.PAIRWISE,
+    val correlationConfidence: Boolean = false,
+    val comparisonGroup: String = "",
+    val eventCategory: String = "",
+    val friedmanComparisons: Boolean = false,
+    val friedmanAdjustment: FriedmanAdjustment = FriedmanAdjustment.HOLM,
+    val factors: List<Int> = emptyList(),
+    val covariates: List<Int> = emptyList(),
+    val factorInteractions: Boolean = true,
+    val sumsOfSquares: SumsOfSquares = SumsOfSquares.III,
+    val modelMarginalMeans: Boolean = true,
+    val modelComparisons: Boolean = false,
+    val modelAdjustment: FriedmanAdjustment = FriedmanAdjustment.HOLM,
+    val checkSlopes: Boolean = false,
+    val factorCountMethod: FactorCountMethod = FactorCountMethod.PARALLEL,
+    val factorCount: String = "1",
+    val factorEigenvalue: String = "1",
+    val factorExtraction: FactorExtraction = FactorExtraction.MINRES,
+    val factorRotation: FactorRotation = FactorRotation.VARIMAX,
+    val factorLoadingCutoff: String = "0.30",
+    val factorSortLoadings: Boolean = false,
+    val factorScreePlot: Boolean = false,
+    val factorKmo: Boolean = true,
+    val factorBartlett: Boolean = true,
 ) {
     companion object {
         fun forData(method: AnalysisMethod, data: CourseData?): AnalysisRequest {
@@ -93,6 +141,7 @@ data class AnalysisRequest(
             } else null
 
             val first = when {
+                method.isFactorialModel -> numeric.firstOrNull { data.columns[it].lowercase().trim() in setOf("outcome", "score", "y") } ?: numeric.firstOrNull()
                 method.usesCounts -> candidates.firstOrNull { it != likelyCount }
                 method.usesGroups -> numeric.lastOrNull { it != likelyCount }
                 else -> numeric.firstOrNull { it != likelyCount }
@@ -106,6 +155,9 @@ data class AnalysisRequest(
                 method.usesCounts -> secondOptions.firstOrNull()
                 else -> secondOptions.firstOrNull { it in numeric }
             } ?: columns.firstOrNull { it != first } ?: first
+            val suggestedFactors = if (method.isFactorialModel) candidates.filter { column -> column != first &&
+                data.rows.asSequence().map { it[column].trim() }.filter(String::isNotBlank).distinct().take(7).count() in 2..6
+            }.sortedBy { if (it in numeric) 1 else 0 }.take(3) else emptyList()
             return AnalysisRequest(
                 method = method,
                 first = first,
@@ -115,8 +167,11 @@ data class AnalysisRequest(
                 ) likelyCount else null,
                 equalVariance = method == AnalysisMethod.ANOVA,
                 descriptiveNumeric = first in numeric,
-                items = if (method.usesItemSelection) numeric.take(if (method == AnalysisMethod.RELIABILITY) 60 else 12) else emptyList(),
+                items = if (method.usesItemSelection) numeric.take(when (method) { AnalysisMethod.RELIABILITY -> 60; AnalysisMethod.EFA -> 20; else -> 12 }) else emptyList(),
                 predictors = if (method == AnalysisMethod.MULTIPLE_REGRESSION) numeric.filter { it != first }.take(12) else emptyList(),
+                correlationVariables = if (method == AnalysisMethod.CORRELATION_MATRIX) numeric.take(20) else emptyList(),
+                factors = suggestedFactors,
+                covariates = if (method == AnalysisMethod.ANCOVA) numeric.filter { it != first && it !in suggestedFactors }.take(6) else emptyList(),
             )
         }
 

@@ -37,8 +37,14 @@ fun AnalysisResult.asReport(source: String, fictional: Boolean, preparationNotes
         appendLine("Included cases = $includedCases")
         appendLine("Excluded rows = $excludedRows")
     }
-    descriptives?.let { summary ->
+    if (test == null) {
+        appendLine("Included rows = $includedCases")
+        appendLine("Excluded rows = $excludedRows")
+    }
+    descriptions.forEach { summary ->
+        appendLine()
         appendLine("Variable: ${summary.variable}")
+        summary.group?.let { appendLine("Group: ${reportCell(it)}") }
         appendLine("Measure\tValue")
         summary.summaryRows().forEach { row -> appendLine(row.joinToString("\t") { reportCell(it) }) }
         summary.numeric?.let { numeric ->
@@ -59,6 +65,8 @@ fun AnalysisResult.asReport(source: String, fictional: Boolean, preparationNotes
         appendLine("Value frequencies (non-missing observations)")
         appendLine("Value\tCount\tPercent")
         summary.frequencies.forEach { appendLine("${reportCell(it.value)}\t${it.count}\t${formatStatistic(it.percent)}") }
+        if (summary.showBarChart) appendLine("Bar chart: category counts, first 20 labels; the frequency table retains every category.")
+        summary.notes.forEach { appendLine(it) }
     }
     if (estimates.isNotEmpty()) {
         appendLine()
@@ -114,6 +122,7 @@ fun AnalysisResult.asReport(source: String, fictional: Boolean, preparationNotes
         appendLine(it.note)
     }
     plots?.let { plots ->
+        plots.scree?.let { appendLine("Scree plot: observed correlation eigenvalues and any parallel 95th-percentile thresholds are retained in the eigenvalue table.") }
         appendLine()
         appendLine("Graphs (figures are shown in the app; this text report includes numerical summaries)")
         if (plots.boxes.isNotEmpty()) {
@@ -141,7 +150,7 @@ fun AnalysisResult.asReport(source: String, fictional: Boolean, preparationNotes
         table.rows.forEach { row -> appendLine(row.joinToString("\t") { reportCell(it) }) }
         table.notes.forEach { appendLine(it) }
     }
-    if (method == AnalysisMethod.RELIABILITY) {
+    if (method == AnalysisMethod.RELIABILITY || method == AnalysisMethod.EFA) {
         appendLine("Complete participants = $includedCases")
         appendLine("Excluded rows = $excludedRows")
     }
@@ -160,7 +169,7 @@ internal fun DescriptiveSummary.summaryRows(modeLimit: Int = Int.MAX_VALUE): Lis
         values.weightedMean?.let { add(listOf("Weighted mean", formatStatistic(it.value))) }
         add(listOf("Median", formatStatistic(values.median)))
     }
-    val mode = if (modes.isEmpty()) {
+    val mode = if (validCount == 0) "— (no non-missing observations)" else if (modes.isEmpty()) {
         if (modeCount == 1) "None (each value occurs once)" else "None (all values have equal frequency)"
     } else modes.take(modeLimit).joinToString(", ") +
         if (modes.size > modeLimit) " (${modes.size - modeLimit} more; see report)" else ""
@@ -172,6 +181,8 @@ internal fun DescriptiveSummary.summaryRows(modeLimit: Int = Int.MAX_VALUE): Lis
         add(listOf("Standard deviation ($basis)", values.standardDeviation?.let(::formatStatistic) ?: "—"))
         add(listOf("Minimum", descriptiveValue(values.minimum)))
         add(listOf("Maximum", descriptiveValue(values.maximum)))
+        add(listOf("Skewness (adjusted sample)", values.skewness?.let(::formatStatistic) ?: "—"))
+        add(listOf("Excess kurtosis (bias-corrected sample)", values.excessKurtosis?.let(::formatStatistic) ?: "—"))
     }
 }
 

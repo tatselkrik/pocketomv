@@ -36,7 +36,7 @@ data class FollowUpResult(
 
 internal object MeanDiagnostics {
     fun attach(data: CourseData, request: AnalysisRequest, result: AnalysisResult): AnalysisResult {
-        if (request.method == AnalysisMethod.MULTIPLE_REGRESSION) return result
+        if (request.method.usesResiduals) return result
         if (!request.checkNormality && !request.checkVariances && !request.pairwiseComparisons) return result
         val grouped = request.method == AnalysisMethod.INDEPENDENT_T || request.method == AnalysisMethod.ANOVA
         val groups = if (grouped) Statistics.readGroups(data, request) else emptyList()
@@ -70,7 +70,7 @@ internal object MeanDiagnostics {
         AssumptionCheck("Shapiro–Wilk", label, values.size, null, note = error.message)
     }
 
-    private fun levene(groups: List<Statistics.Group>): AssumptionCheck {
+    internal fun levene(groups: List<Statistics.Group>): AssumptionCheck {
         val n = groups.sumOf { it.values.size }
         return try {
             require(groups.all { it.values.size >= 2 }) { "Levene's check needs at least two observations in every group." }

@@ -43,6 +43,7 @@ data class AnalysisPlots(
     val boxes: List<BoxPlotSummary> = emptyList(),
     val qq: List<NormalQQPlot> = emptyList(),
     val scatter: ScatterPlot? = null,
+    val scree: ScreePlot? = null,
 )
 
 internal object PlotCalculator {
@@ -53,10 +54,14 @@ internal object PlotCalculator {
         require(!request.showBoxplot || request.method.supportsBoxplot) { "Boxplots require numeric sample data." }
         require(!request.showQQPlot || request.method.supportsQQPlot) { "Q–Q plots are available for numeric Descriptives, t tests and ANOVA." }
         require(!request.showScatterplot || request.method.supportsScatterplot) { "Scatterplots are available for correlation and regression." }
-        if (request.method == AnalysisMethod.MULTIPLE_REGRESSION) return result
+        if (request.method.usesResiduals || request.method == AnalysisMethod.EFA) return result
+        if (request.method == AnalysisMethod.DESCRIPTIVES) {
+            require((!request.showBoxplot && !request.showQQPlot) || request.descriptiveNumeric) { "Choose Numeric data for boxplots and Q–Q plots." }
+            return result
+        }
         if (!request.showBoxplot && !request.showQQPlot && !request.showScatterplot) return result
-        if (request.method == AnalysisMethod.REPEATED_ANOVA) {
-            val matrix = NumericMatrix.read(data, request.items, 2, 12)
+        if (request.method == AnalysisMethod.REPEATED_ANOVA || request.method == AnalysisMethod.FRIEDMAN) {
+            val matrix = NumericMatrix.read(data, request.items, if (request.method == AnalysisMethod.FRIEDMAN) 3 else 2, 12)
             return result.copy(plots = AnalysisPlots(boxes = matrix.labels.indices.map { box(matrix.labels[it], matrix.columns[it]) }))
         }
         require(request.method != AnalysisMethod.DESCRIPTIVES || request.descriptiveNumeric) { "Choose Numeric data for boxplots and Q–Q plots." }

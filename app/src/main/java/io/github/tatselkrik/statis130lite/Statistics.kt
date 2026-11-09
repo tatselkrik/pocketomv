@@ -41,7 +41,8 @@ data class FrequencyTable(
 )
 
 data class TestResult(val label: String, val statistic: Double, val pValue: Double)
-data class AnalysisTable(val title: String, val headers: List<String>, val rows: List<List<String>>, val notes: List<String> = emptyList())
+data class AnalysisTable(val title: String, val headers: List<String>, val rows: List<List<String>>,
+    val notes: List<String> = emptyList(), val rowLabelColumns: Int = 1)
 
 data class AnalysisResult(
     val method: AnalysisMethod,
@@ -54,11 +55,14 @@ data class AnalysisResult(
     val samples: List<SampleSummary> = emptyList(),
     val frequencies: FrequencyTable? = null,
     val notes: List<String> = emptyList(),
-    val descriptives: DescriptiveSummary? = null,
+    val descriptions: List<DescriptiveSummary> = emptyList(),
     val assumptionChecks: List<AssumptionCheck> = emptyList(),
     val followUp: FollowUpResult? = null,
     val plots: AnalysisPlots? = null,
     val tables: List<AnalysisTable> = emptyList(),
+    val correlations: CorrelationMatrixResult? = null,
+    val associations: AssociationSummary? = null,
+    val friedman: FriedmanSummary? = null,
 ) {
     constructor(
         method: AnalysisMethod, calculation: String, statisticLabel: String, statistic: Double,
@@ -70,10 +74,12 @@ data class AnalysisResult(
         excludedRows, degreesOfFreedom, estimates, samples, frequencies, notes)
 
     init {
-        require((test == null) == (method == AnalysisMethod.DESCRIPTIVES || method == AnalysisMethod.RELIABILITY))
-        require((method == AnalysisMethod.DESCRIPTIVES) == (descriptives != null))
+        require((test == null) == (method in setOf(AnalysisMethod.DESCRIPTIVES, AnalysisMethod.RELIABILITY, AnalysisMethod.CORRELATION_MATRIX, AnalysisMethod.EFA)))
+        require((method == AnalysisMethod.DESCRIPTIVES) == descriptions.isNotEmpty())
+        require((method == AnalysisMethod.CORRELATION_MATRIX) == (correlations != null))
     }
 
+    val descriptives: DescriptiveSummary? = descriptions.firstOrNull()
     val statisticLabel: String get() = requireNotNull(test).label
     val statistic: Double get() = requireNotNull(test).statistic
     val pValue: Double get() = requireNotNull(test).pValue
@@ -83,6 +89,11 @@ data class AnalysisResult(
 object Statistics {
     fun goodnessCategoryOrder(data: CourseData, request: AnalysisRequest): List<String> =
         orderedLabels(frequencyRecords(data, request).map { it.first })
+
+    internal fun contingencyCategoryOrder(data: CourseData, request: AnalysisRequest): Pair<List<String>, List<String>> {
+        val records = frequencyRecords(data, request).filter { it.count > 0 }
+        return orderedLabels(records.map { it.first }) to orderedLabels(records.map { it.second })
+    }
 
     fun run(data: CourseData, request: AnalysisRequest): AnalysisResult {
         require(!request.checkNormality || request.method.supportsNormalityCheck) { "Normality checks are available for t tests and one-way ANOVA." }
@@ -116,11 +127,16 @@ object Statistics {
             AnalysisMethod.KRUSKAL_WALLIS -> kruskalWallis(data, request)
             AnalysisMethod.CHI_GOODNESS -> goodness(data, request)
             AnalysisMethod.CHI_INDEPENDENCE -> independence(data, request)
+            AnalysisMethod.FISHER_EXACT -> CategoricalAssociations.fisher(independence(data, request), request)
             AnalysisMethod.PEARSON, AnalysisMethod.SPEARMAN -> correlation(data, request)
+            AnalysisMethod.CORRELATION_MATRIX -> CorrelationMatrices.run(data, request)
             AnalysisMethod.REGRESSION -> regression(data, request)
             AnalysisMethod.RELIABILITY -> ReliabilityAnalysis.run(data, request)
             AnalysisMethod.MULTIPLE_REGRESSION -> MultipleRegression.run(data, request)
             AnalysisMethod.REPEATED_ANOVA -> RepeatedAnova.run(data, request)
+            AnalysisMethod.FRIEDMAN -> FriedmanAnalysis.run(data, request)
+            AnalysisMethod.FACTORIAL_ANOVA, AnalysisMethod.ANCOVA -> FactorialAnova.run(data, request)
+            AnalysisMethod.EFA -> ExploratoryFactors.run(data, request)
         }
         result.test?.let { test ->
             require(!test.statistic.isNaN() && test.pValue.isFinite() && test.pValue in 0.0..1.0) {
@@ -134,7 +150,9 @@ object Statistics {
         val missingNote = if (result.excludedRows > 0) {
             listOf("${result.excludedRows} data rows were excluded because selected values were missing.")
         } else emptyList()
-        val extended = PlotCalculator.attach(data, request, MeanDiagnostics.attach(data, request, result))
+        val categorical = if (request.method in setOf(AnalysisMethod.CHI_INDEPENDENCE, AnalysisMethod.FISHER_EXACT))
+            CategoricalAssociations.attach(result, request) else result
+        val extended = PlotCalculator.attach(data, request, MeanDiagnostics.attach(data, request, categorical))
         return extended.copy(notes = extended.notes + missingNote)
     }
 
@@ -456,11 +474,8 @@ object Statistics {
         val pairs = readPairs(data, request)
         require(pairs.first.size >= 3) { "Correlation inference needs at least three complete pairs." }
         val ranked = request.method == AnalysisMethod.SPEARMAN
-        val first = if (ranked) ranks(pairs.first).values else pairs.first
-        val second = if (ranked) ranks(pairs.second).values else pairs.second
-        val fit = standardizedFit(first, second)
-        val r = (fit.xy / sqrt(fit.xx * fit.yy)).coerceIn(-1.0, 1.0)
-        val df = first.size - 2.0
+        val r = correlationCoefficient(pairs.first, pairs.second, ranked)
+        val df = pairs.first.size - 2.0
         val t = if (abs(r) == 1.0) {
             if (r > 0) Double.POSITIVE_INFINITY else Double.NEGATIVE_INFINITY
         } else r * sqrt(df / ((1.0 - r) * (1.0 + r)))
@@ -468,13 +483,20 @@ object Statistics {
             request.method,
             if (ranked) "Average-rank Spearman correlation with t approximation" else "Pearson correlation with t test",
             if (ranked) "ρ" else "r", r, tProbability(t, df, request.tail),
-            first.size.toLong(), data.rows.size - first.size,
+            pairs.first.size.toLong(), data.rows.size - pairs.first.size,
             degreesOfFreedom = listOf(df),
             samples = listOf(summary(data.columns[request.first], pairs.first), summary(data.columns[request.second], pairs.second)),
             notes = listOf(tailNote(request.tail, "correlation")) +
                 if (ranked) listOf("The p-value uses a t approximation, including for small samples. Tied values receive average ranks.")
                 else listOf("The p-value tests zero population correlation under the usual Pearson assumptions."),
         )
+    }
+
+    internal fun correlationCoefficient(first: DoubleArray, second: DoubleArray, ranked: Boolean): Double {
+        val x = if (ranked) ranks(first).values else first
+        val y = if (ranked) ranks(second).values else second
+        val fit = standardizedFit(x, y)
+        return (fit.xy / sqrt(fit.xx * fit.yy)).coerceIn(-1.0, 1.0)
     }
 
     private fun regression(data: CourseData, request: AnalysisRequest): AnalysisResult {
@@ -612,9 +634,9 @@ object Statistics {
         )
     }
 
-    private data class Ranking(val values: DoubleArray, val tieSum: Double)
+    internal data class Ranking(val values: DoubleArray, val tieSum: Double)
 
-    private fun ranks(values: DoubleArray): Ranking {
+    internal fun ranks(values: DoubleArray): Ranking {
         val order = values.indices.sortedBy { values[it] }
         val ranked = DoubleArray(values.size)
         var start = 0
@@ -664,7 +686,7 @@ object Statistics {
         return Estimate(label, value, value - margin, value + margin)
     }
 
-    private fun tProbability(statistic: Double, df: Double, tail: Tail): Double {
+    internal fun tProbability(statistic: Double, df: Double, tail: Tail): Double {
         val distribution = TDistribution.of(df)
         return when (tail) {
             Tail.TWO_SIDED -> min(1.0, 2.0 * distribution.survivalProbability(abs(statistic)))

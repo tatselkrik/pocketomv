@@ -124,8 +124,10 @@ internal object PdfReport {
         }
 
         fun table(table: AnalysisTable) {
+            require(table.rowLabelColumns in 1..minOf(4, table.headers.size)) { "The report table needs valid row labels." }
+            val labels = (0 until table.rowLabelColumns).toList()
             val groups = if (table.headers.size <= 5) listOf(table.headers.indices.toList())
-                else (1 until table.headers.size).toList().chunked(4).map { listOf(0) + it }
+                else (table.rowLabelColumns until table.headers.size).toList().chunked(5 - table.rowLabelColumns).map { labels + it }
             groups.forEachIndexed { groupIndex, selected ->
                 val title = table.title + if (groups.size > 1) " · columns ${groupIndex + 1}/${groups.size}" else ""
                 val headers = selected.map { index ->

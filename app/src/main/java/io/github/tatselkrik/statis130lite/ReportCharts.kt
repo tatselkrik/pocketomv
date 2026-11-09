@@ -71,6 +71,25 @@ internal object ReportCharts {
         return ChartScene(640, 340, marks)
     }
 
+    fun scree(plot: ScreePlot): ChartScene {
+        val marks = mutableListOf<ChartMark>()
+        val y = PlotAxis(0.0, (plot.observed + plot.parallel95).max().coerceAtLeast(1.0))
+        marks.axes(y, "Correlation eigenvalue", PlotAxis(1.0, plot.observed.size.toDouble()), "Eigenvalue order")
+        fun curve(values: List<Double>, color: String) {
+            val points = values.mapIndexed { i, value -> px(i.toDouble() / (plot.observed.size - 1)) to py(y.fraction(value)) }
+            points.zipWithNext().forEach { (a, b) -> marks.add(ChartMark.Line(a.first, a.second, b.first, b.second, color, 2.0)) }
+            if (color == "#006b5e") points.forEach { marks.add(ChartMark.Circle(it.first, it.second)) }
+            else points.forEach { marks.add(ChartMark.Rectangle(it.first - 2, it.second - 2, 4.0, 4.0, color, color)) }
+        }
+        curve(plot.observed, "#006b5e")
+        marks.add(ChartMark.Text(LEFT, 355.0, "Circles: observed eigenvalues", 11.0))
+        if (plot.parallel95.isNotEmpty()) {
+            curve(plot.parallel95, "#a75a73")
+            marks.add(ChartMark.Text(340.0, 355.0, "Squares: parallel null 95th percentile", 11.0))
+        }
+        return ChartScene(640, 375, marks)
+    }
+
     fun boxes(boxes: List<BoxPlotSummary>, axis: PlotAxis): ChartScene {
         val marks = mutableListOf<ChartMark>()
         marks.axes(axis, "Observed values")
@@ -85,6 +104,25 @@ internal object ReportCharts {
             box.outliers.forEach { marks.add(ChartMark.Circle(center, y(it), filled = false)) }
             marks.add(ChartMark.Text(center, 297.0, label(box.label, (step / 10).toInt().coerceIn(3, 12)), size = 10.0, anchor = "middle"))
             marks.add(ChartMark.Text(center, 315.0, "N=${box.size}", size = 10.0, anchor = "middle"))
+        }
+        return ChartScene(640, 340, marks)
+    }
+
+    fun bars(values: List<ValueFrequency>, maximum: Int): ChartScene {
+        require(values.isNotEmpty() && values.size <= 10 && maximum > 0)
+        val marks = mutableListOf<ChartMark>()
+        marks.add(ChartMark.Text(8.0, 20.0, "Category"))
+        marks.add(ChartMark.Text(210.0, 20.0, "Frequency"))
+        for (fraction in listOf(0.0, 0.5, 1.0)) {
+            val x = 210 + 360 * fraction
+            marks.add(ChartMark.Line(x, 35.0, x, 290.0, "#d3dfda", 0.8))
+            marks.add(ChartMark.Text(x, 312.0, formatStatistic(maximum * fraction), anchor = "middle"))
+        }
+        values.forEachIndexed { index, value ->
+            val y = 45.0 + index * 24
+            marks.add(ChartMark.Text(8.0, y + 10, label(value.value, 24), size = 10.0))
+            marks.add(ChartMark.Rectangle(210.0, y, 360.0 * value.count / maximum, 14.0))
+            marks.add(ChartMark.Text(625.0, y + 11, value.count.toString(), anchor = "end"))
         }
         return ChartScene(640, 340, marks)
     }

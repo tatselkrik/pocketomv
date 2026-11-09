@@ -26,8 +26,8 @@ android {
         applicationId = "io.github.tatselkrik.statis130lite"
         minSdk = 26
         targetSdk = 37
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.3.0"
     }
 
     buildFeatures {
@@ -36,6 +36,26 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+    }
+}
+
+abstract class AppLicenseAssets : DefaultTask() {
+    @get:InputFile abstract val licenseFile: org.gradle.api.file.RegularFileProperty
+    @get:OutputDirectory abstract val outputDirectory: org.gradle.api.file.DirectoryProperty
+
+    @TaskAction fun copyLicense() {
+        val destination = outputDirectory.get().asFile
+        destination.mkdirs()
+        licenseFile.get().asFile.copyTo(destination.resolve("LICENSE.txt"), overwrite = true)
+    }
+}
+androidComponents {
+    onVariants { variant ->
+        val licenseAssets = tasks.register<AppLicenseAssets>("copy${variant.name.replaceFirstChar { it.uppercase() }}AppLicense") {
+            licenseFile.set(rootProject.layout.projectDirectory.file("LICENSE"))
+            outputDirectory.set(layout.buildDirectory.dir("generated/licenseAssets/${variant.name}"))
+        }
+        variant.sources.assets?.addGeneratedSourceDirectory(licenseAssets, AppLicenseAssets::outputDirectory)
     }
 }
 

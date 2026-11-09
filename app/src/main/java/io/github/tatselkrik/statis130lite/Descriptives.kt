@@ -24,6 +24,8 @@ data class NumericDescription(
     val weightedMean: WeightedMean?,
     val percentiles: List<PercentileValue>,
     val histogram: List<HistogramBin>,
+    val skewness: Double? = null,
+    val excessKurtosis: Double? = null,
 )
 
 data class DescriptiveSummary(
@@ -34,11 +36,77 @@ data class DescriptiveSummary(
     val modeCount: Int,
     val frequencies: List<ValueFrequency>,
     val numeric: NumericDescription?,
-)
+    val group: String? = null,
+    val showBarChart: Boolean = false,
+    val notes: List<String> = emptyList(),
+    val numericData: Boolean = numeric != null,
+) {
+    val label: String get() = if (group == null) variable else "$variable · $group"
+}
 
 internal object Descriptives {
     fun calculate(data: CourseData, request: AnalysisRequest): AnalysisResult {
         require(request.method == AnalysisMethod.DESCRIPTIVES)
+        val selected = request.descriptiveVariables ?: listOf(request.first)
+        require(selected.size in 1..20 && selected.distinct().size == selected.size && selected.all { it in data.columns.indices }) {
+            "Select 1–20 different variables for descriptives."
+        }
+        request.splitBy?.let { require(it in data.columns.indices && it !in selected && it != request.weight) {
+            "Choose a separate column to split the descriptives by group."
+        } }
+        request.weight?.let { require(it in data.columns.indices && it !in selected) { "Choose a separate numeric weight column." } }
+        require(!request.showBarChart || !request.descriptiveNumeric) { "Choose Categories / text for a frequency bar chart." }
+        val groups: List<Pair<String?, List<Int>>> = request.splitBy?.let { column ->
+            data.rows.indices.filter { data.rows[it][column].isNotBlank() }
+                .groupBy { data.rows[it][column].trim() }.toSortedMap().map { it.key to it.value }
+        } ?: listOf(null to data.rows.indices.toList())
+        require(groups.isNotEmpty()) { "The group column needs at least one non-blank value." }
+        require(groups.size <= 40 && groups.size * selected.size <= 200) {
+            "Use at most 40 groups and 200 variable/group combinations. Choose fewer variables or groups."
+        }
+        val multiple = selected.size * groups.size > 1
+        val descriptions = ArrayList<DescriptiveSummary>()
+        val boxes = ArrayList<BoxPlotSummary>()
+        val qq = ArrayList<NormalQQPlot>()
+        val allNotes = linkedSetOf<String>()
+        for ((group, rows) in groups) {
+            val groupData = CourseData(data.columns, rows.map { data.rows[it] })
+            for (column in selected) {
+                val valid = groupData.rows.count { row -> if (request.descriptiveNumeric) !row[column].isMissingNumber() else row[column].isNotBlank() }
+                val summary = if (valid == 0 && multiple) {
+                    DescriptiveSummary(data.columns[column], 0, rows.size, emptyList(), 0, emptyList(), null,
+                        notes = listOf("No non-missing observations in this variable/group."), numericData = request.descriptiveNumeric)
+                } else {
+                    val result = single(groupData, request.copy(first = column), rows, multiple || request.splitBy != null)
+                    allNotes.addAll(result.notes)
+                    result.descriptives!!.copy(notes = result.notes)
+                }.copy(group = group, showBarChart = request.showBarChart)
+                descriptions.add(summary)
+                if (request.descriptiveNumeric && valid > 0 && (request.showBoxplot || request.showQQPlot)) {
+                    val values = groupData.rows.mapNotNull { row -> row[column].takeUnless { it.isMissingNumber() }?.toDouble() }.toDoubleArray()
+                    if (request.showBoxplot) boxes.add(PlotCalculator.box(summary.label, values))
+                    if (request.showQQPlot) qq.add(PlotCalculator.qq(summary.label, values))
+                }
+            }
+        }
+        require(descriptions.any { it.validCount > 0 }) { "Select a variable with at least one non-missing value." }
+        val included = groups.sumOf { (_, rows) -> rows.count { row -> selected.any { column ->
+            if (request.descriptiveNumeric) !data.rows[row][column].isMissingNumber() else data.rows[row][column].isNotBlank()
+        } } }
+        if (multiple) allNotes.add("Each variable is summarized using its own non-missing observations within each group. Included rows have at least one selected value; see each variable's N.")
+        request.splitBy?.let { column ->
+            val missingGroups = data.rows.count { it[column].isBlank() }
+            allNotes.add("Split by ${data.columns[column]}; groups are ordered alphabetically by their stored labels. $missingGroups rows with blank group labels are excluded. Literal NA labels remain groups.")
+        }
+        return AnalysisResult(AnalysisMethod.DESCRIPTIVES,
+            if (multiple || request.splitBy != null) "Descriptive summaries by variable and group" else if (request.descriptiveNumeric) "Numeric summaries and distribution" else "Category frequencies and mode",
+            test = null, includedCases = included.toLong(), excludedRows = data.rows.size - included,
+            descriptions = descriptions, notes = allNotes.toList(),
+            tables = if (multiple) listOf(comparisonTable(descriptions, request.descriptiveNumeric)) else emptyList(),
+            plots = if (boxes.isNotEmpty() || qq.isNotEmpty()) AnalysisPlots(boxes = boxes, qq = qq) else null)
+    }
+
+    private fun single(data: CourseData, request: AnalysisRequest, originalRows: List<Int>, allowUnavailableWeights: Boolean): AnalysisResult {
         if (!request.descriptiveNumeric) {
             require(request.weight == null) { "Weighted mean requires a numeric variable." }
             val values = data.rows.map { it[request.first].trim() }.filter(String::isNotBlank)
@@ -67,15 +135,15 @@ internal object Descriptives {
         data.rows.forEachIndexed { index, row ->
             val text = row[request.first].trim()
             if (!text.isMissingNumber()) {
-                val value = finiteNumber(text, index, "value").let { if (it == 0.0) 0.0 else it }
+                val value = finiteNumber(text, originalRows[index], "value").let { if (it == 0.0) 0.0 else it }
                 values.add(value)
                 request.weight?.let { column ->
                     val rawWeight = row[column].trim()
                     if (rawWeight.isMissingNumber()) {
                         missingWeights++
                     } else {
-                        val weight = finiteNumber(rawWeight, index, "weight")
-                        require(weight >= 0.0) { "Weights must be nonnegative. Check data row ${index + 1}." }
+                        val weight = finiteNumber(rawWeight, originalRows[index], "weight")
+                        require(weight >= 0.0) { "Weights must be nonnegative. Check data row ${originalRows[index] + 1}." }
                         if (weight == 0.0) zeroWeights++ else {
                             weightedValues.add(value)
                             weights.add(weight)
@@ -93,6 +161,10 @@ internal object Descriptives {
         require(mean.isFinite()) { "Rescale the values to calculate their mean." }
         val (variance, standardDeviation) = dispersion(numbers, request.population, notes)
         val weightedMean = request.weight?.let { column ->
+            if (weights.isEmpty() && allowUnavailableWeights) {
+                notes.add("Weighted mean is unavailable for this variable/group because no complete row has a positive weight.")
+                return@let null
+            }
             require(weights.isNotEmpty()) { "At least one complete row must have a positive weight." }
             val weightScale = weights.max()
             val valueScale = weightedValues.maxOf { abs(it) }
@@ -113,9 +185,12 @@ internal object Descriptives {
             ValueFrequency(descriptiveValue(value), count, count * 100.0 / values.size)
         }
         val bins = histogram(sorted, requestedBins, notes)
+        val shape = shape(numbers)
+        notes.add("Skewness is the adjusted Fisher–Pearson sample coefficient (N ≥ 3). Kurtosis is bias-corrected excess kurtosis (N ≥ 4; normal reference 0). Both are unweighted and need nonconstant data, independently of the variance/SD choice.")
         val numeric = NumericDescription(
             mean, percentile(sorted, 50.0), sorted.first(), sorted.last(), variance, standardDeviation,
             request.population, weightedMean, percentiles.map { PercentileValue(it, percentile(sorted, it)) }, bins,
+            skewness = shape.first, excessKurtosis = shape.second,
         )
         return result(data, request, frequencies, values.size, numeric, notes)
     }
@@ -132,14 +207,56 @@ internal object Descriptives {
             calculation = if (numeric == null) "Category frequencies and mode" else "Numeric summaries and distribution",
             test = null,
             includedCases = count.toLong(), excludedRows = data.rows.size - count,
-            descriptives = DescriptiveSummary(data.columns[request.first], count, data.rows.size - count,
-                modes, highest, frequencies, numeric),
+            descriptions = listOf(DescriptiveSummary(data.columns[request.first], count, data.rows.size - count,
+                modes, highest, frequencies, numeric)),
             notes = notes + when {
                 highest == 1 -> listOf("Every value occurs once, so no repeated mode is reported.")
                 uniform -> listOf("All distinct values have equal frequency, so no mode is reported under the introductory-course convention.")
                 else -> emptyList()
             },
         )
+    }
+
+    private fun shape(values: DoubleArray): Pair<Double?, Double?> {
+        if (values.size < 3 || values.all { it == values[0] }) return null to null
+        // Subtract an observed origin first so a large offset does not erase small differences.
+        val differences = DoubleArray(values.size) { values[it] - values[0] }
+        val centered = if (differences.all(Double::isFinite)) differences else {
+            val scale = values.maxOf { abs(it) }
+            DoubleArray(values.size) { values[it] / scale }
+        }
+        val scale = centered.maxOf { abs(it) }
+        val scaled = DoubleArray(values.size) { centered[it] / scale }
+        val mean = Mean.of(*scaled).asDouble
+        val deviations = DoubleArray(values.size) { scaled[it] - mean }
+        val spread = deviations.maxOf { abs(it) }
+        if (spread == 0.0) return null to null
+        val normalized = deviations.map { it / spread }
+        val n = values.size.toDouble()
+        val m2 = compensatedSum(normalized.map { it * it }) / n
+        val m3 = compensatedSum(normalized.map { it * it * it }) / n
+        val m4 = compensatedSum(normalized.map { it * it * it * it }) / n
+        val skewness = sqrt(n * (n - 1)) / (n - 2) * (m3 / (m2 * sqrt(m2)))
+        val kurtosis = if (values.size < 4) null else
+            (n - 1) / ((n - 2) * (n - 3)) * ((n + 1) * (m4 / (m2 * m2) - 3) + 6)
+        return skewness.takeIf { it.isFinite() } to kurtosis?.takeIf { it.isFinite() }
+    }
+
+    private fun comparisonTable(descriptions: List<DescriptiveSummary>, numeric: Boolean): AnalysisTable {
+        val grouped = descriptions.any { it.group != null }
+        val headers = listOf("Variable") + (if (grouped) listOf("Group") else emptyList()) +
+            listOf("Valid N", "Missing") + if (numeric) listOf("Mean", "SD", "Median", "Skewness", "Excess kurtosis") else listOf("Mode")
+        val rows = descriptions.map { summary ->
+            listOf(summary.variable) + (if (grouped) listOf(summary.group ?: "") else emptyList()) +
+                listOf(summary.validCount.toString(), summary.missingCount.toString()) + if (numeric) {
+                    val values = summary.numeric
+                    listOf(values?.mean, values?.standardDeviation, values?.median, values?.skewness, values?.excessKurtosis)
+                        .map { it?.let(::formatStatistic) ?: "—" }
+                } else listOf(if (summary.validCount == 0) "—" else summary.modes.joinToString(", ").ifEmpty { "None" })
+        }
+        return AnalysisTable("Descriptives by variable and group", headers, rows,
+            listOf("N and missing counts are specific to each variable within its group. Detailed summaries and frequency tables follow. Undefined statistics are shown as —."),
+            rowLabelColumns = if (grouped) 2 else 1)
     }
 
     private fun finiteNumber(text: String, row: Int, kind: String): Double {

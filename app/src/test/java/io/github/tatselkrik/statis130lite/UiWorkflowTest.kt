@@ -19,8 +19,10 @@ class UiWorkflowTest {
             assertEquals(method, result.method)
             if (method == AnalysisMethod.DESCRIPTIVES) {
                 assertTrue(result.test == null && result.descriptives != null)
-            } else if (method == AnalysisMethod.RELIABILITY) {
+            } else if (method == AnalysisMethod.RELIABILITY || method == AnalysisMethod.EFA) {
                 assertTrue(result.test == null && result.tables.isNotEmpty())
+            } else if (method == AnalysisMethod.CORRELATION_MATRIX) {
+                assertTrue(result.test == null && result.correlations != null && result.tables.isNotEmpty())
             } else assertTrue(method.title, result.pValue in 0.0..1.0)
             assertEquals(0, result.excludedRows)
         }

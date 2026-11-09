@@ -17,7 +17,11 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -33,15 +37,31 @@ internal fun DescriptiveOptions(
     data: CourseData, request: AnalysisRequest, enabled: Boolean, onChange: (AnalysisRequest) -> Unit,
 ) {
     val numericColumns = remember(data) { data.numericColumns() }
+    val selected = request.descriptiveVariables ?: listOf(request.first)
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        ColumnSelection("Variables", data, selected, data.columns.indices.filter { it != request.splitBy }, 20,
+            if (request.descriptiveNumeric) AnalysisRequest.forData(AnalysisMethod.CORRELATION_MATRIX, data).correlationVariables.filter { it != request.splitBy }
+            else data.columns.indices.filter { it != request.splitBy }.take(20), enabled) {
+            onChange(request.copy(descriptiveVariables = it, first = it.firstOrNull() ?: request.first,
+                weight = request.weight?.takeUnless { weight -> weight in it }, qqSample = ""))
+        }
+        val groups: List<Pair<Int?, String>> = listOf(null to "No grouping") +
+            data.columns.indices.filter { it !in selected && it != request.weight }.map { it to data.columns[it] }
+        ChoiceField("Split by (optional)", request.splitBy, groups, enabled) {
+            onChange(request.copy(splitBy = it, qqSample = ""))
+        }
+        Text("Each selected variable has its own N within each group. Blank group labels are excluded.",
+            style = MaterialTheme.typography.bodySmall)
         ChoiceField("Data type", request.descriptiveNumeric,
             listOf(true to "Numeric", false to "Categories / text"), enabled) {
             onChange(request.copy(descriptiveNumeric = it, weight = if (it) request.weight else null,
-                showBoxplot = it && request.showBoxplot, showQQPlot = it && request.showQQPlot))
+                showBoxplot = it && request.showBoxplot, showQQPlot = it && request.showQQPlot,
+                showBarChart = !it && request.showBarChart))
         }
+        Text("The data type applies to every selected variable. Use Categories / text to treat numeric codes as categories.", style = MaterialTheme.typography.bodySmall)
         if (request.descriptiveNumeric) {
             val weights: List<Pair<Int?, String>> = listOf(null to "No weights") +
-                numericColumns.filter { it != request.first }.map { it to data.columns[it] }
+                numericColumns.filter { it !in selected && it != request.splitBy }.map { it to data.columns[it] }
             ChoiceField("Weight column (optional)", request.weight, weights, enabled) {
                 onChange(request.copy(weight = it))
             }
@@ -53,6 +73,7 @@ internal fun DescriptiveOptions(
             }
             Text("Choose Population when these observations are the entire population you want to describe.",
                 style = MaterialTheme.typography.bodySmall)
+            Text("Skewness and excess kurtosis use bias-corrected sample estimates. Small or constant samples show — where undefined.", style = MaterialTheme.typography.bodySmall)
             OutlinedTextField(
                 value = request.percentiles,
                 onValueChange = { onChange(request.copy(percentiles = it)) },
@@ -72,31 +93,71 @@ internal fun DescriptiveOptions(
         } else {
             Text("Category summaries show the mode, counts and percentages. Blank entries are missing.",
                 style = MaterialTheme.typography.bodySmall)
+            CheckOption("Bar chart (category counts)", request.showBarChart, enabled) { onChange(request.copy(showBarChart = it)) }
         }
     }
 }
 
-internal fun LazyListScope.descriptiveItems(summary: DescriptiveSummary) {
-    item { TitledTable("Summary · ${summary.variable}", listOf("Measure", "Value"), summary.summaryRows(modeLimit = 10)) }
+internal fun LazyListScope.descriptiveItems(summaries: List<DescriptiveSummary>) {
+    if (summaries.isEmpty()) return
+    item {
+        var selection by rememberSaveable(summaries.map { it.label }) { mutableIntStateOf(0) }
+        val index = selection.coerceIn(summaries.indices)
+        Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+            if (summaries.size > 1) ChoiceField("Detailed distribution", index, summaries.mapIndexed { i, summary -> i to summary.label }, true) { selection = it }
+            DescriptiveDetail(summaries[index])
+        }
+    }
+}
+
+@Composable
+private fun DescriptiveDetail(summary: DescriptiveSummary) {
+    TitledTable("Summary · ${summary.label}", listOf("Measure", "Value"), summary.summaryRows(modeLimit = 10))
     summary.numeric?.let { numeric ->
-        if (numeric.percentiles.isNotEmpty()) item {
+        if (numeric.percentiles.isNotEmpty()) {
             TitledTable("Percentiles", listOf("Percentile", "Value"),
                 numeric.percentiles.map { listOf(formatStatistic(it.percent), formatStatistic(it.value)) })
         }
-        item { Histogram(summary.variable, numeric.histogram, summary.validCount) }
-        item {
+        Histogram(summary.label, numeric.histogram, summary.validCount)
+        run {
             TitledTable("Histogram intervals", listOf("Interval", "Count"),
                 numeric.histogram.mapIndexed { index, bin ->
                     listOf(bin.intervalLabel(index == numeric.histogram.lastIndex), bin.count.toString())
                 })
         }
     }
-    item {
+    if (summary.showBarChart && summary.frequencies.isNotEmpty()) CategoryBarChart(summary)
+    run {
         TitledTable("Value frequencies", listOf("Value", "Count", "Percent"),
             summary.frequencies.take(100).map { listOf(it.value, it.count.toString(), formatStatistic(it.percent)) })
         if (summary.frequencies.size > 100) {
             Text("Showing the first 100 of ${summary.frequencies.size} values. Copy or save the report for the full frequency table.",
                 style = MaterialTheme.typography.bodySmall)
+        }
+    }
+    summary.notes.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+}
+
+@Composable
+private fun CategoryBarChart(summary: DescriptiveSummary) {
+    val maximum = summary.frequencies.maxOf { it.count }.coerceAtLeast(1)
+    val fill = MaterialTheme.colorScheme.primary
+    Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Bar chart · ${summary.label}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text("Frequency · common scale 0–$maximum", style = MaterialTheme.typography.labelMedium)
+            summary.frequencies.take(20).forEach { value ->
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(value.value, style = MaterialTheme.typography.bodySmall)
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Canvas(Modifier.weight(1f).height(18.dp).semantics {
+                            contentDescription = "${value.value}: ${value.count} observations"
+                        }) { drawRect(fill, size = Size(size.width * value.count / maximum, size.height)) }
+                        Text(value.count.toString(), style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+            }
+            if (summary.frequencies.size > 20) Text("Chart shows the first 20 categories in label order. The frequency table and reports retain every category.", style = MaterialTheme.typography.bodySmall)
         }
     }
 }

@@ -1,10 +1,10 @@
 <h1 align="center">pocketomv 📊</h1>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.2.0-006b5e" alt="Version 0.2.0">
+  <img src="https://img.shields.io/badge/version-0.3.0-006b5e" alt="Version 0.3.0">
   <img src="https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&amp;logoColor=white" alt="Android 8.0 or newer">
   <img src="https://img.shields.io/badge/Kotlin-Jetpack%20Compose-7F52FF?logo=kotlin&amp;logoColor=white" alt="Kotlin and Jetpack Compose">
-  <img src="https://img.shields.io/badge/repository-private-172d28" alt="Private repository">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-172d28" alt="MIT license"></a>
 </p>
 
 <p align="center">
@@ -24,8 +24,12 @@ Current work saves automatically in private device storage. The app restores app
 ## Features
 
 - Classroom analyses covering descriptives, internal consistency, comparisons of means and ranks, frequencies, correlation and regression.
+- Factorial ANOVA with interactions and Type I/II/III sums of squares; ANCOVA with numeric covariates, adjusted means and slope checks.
+- Exploratory common-factor analysis with MINRES/principal axis extraction, Varimax/Promax rotation, factor retention, KMO, Bartlett's test and scree plots.
 - Mean, optional weighted mean, median, mode, sample/population variance and standard deviation, and custom percentiles.
+- Multiple-variable descriptives split by an optional group, with adjusted sample skewness and excess kurtosis.
 - Numeric or categorical frequency tables, plus numeric histograms with automatic or custom intervals.
+- Optional categorical frequency bar charts.
 - Optional boxplots, normal Q–Q plots and scatterplots, with a fitted line for simple regression.
 - Separate Data, Analyze and Results screens.
 - Data entry with optional column headings, direct Excel `.xlsx` import with worksheet selection, and CSV/TSV import.
@@ -35,8 +39,11 @@ Current work saves automatically in private device storage. The app restores app
 - ANOVA pairwise comparisons with Tukey–Kramer or Games–Howell, adjusted p-values and 95% intervals.
 - Reliability with raw/standardized Cronbach's alpha, one-factor McDonald's omega, item-rest correlations and alpha if an item is removed.
 - Multiple linear regression with 1–12 numeric predictors, coefficient intervals, standardized coefficients, VIF and optional residual diagnostics.
+- Pearson or Spearman correlation matrices with pairwise/listwise missing-value handling, sample sizes, p-values and optional Pearson intervals.
 - Repeated-measures ANOVA for one within-subject factor, with sphericity corrections and optional paired follow-up comparisons.
 - Directional alternatives for supported tests and custom expected weights for goodness of fit.
+- Fisher's exact test for 2 × 2 tables, plus signed Phi, sample odds ratios and relative risks with explicit group/event choices.
+- Friedman repeated-condition rank tests with Kendall's W and optional Durbin–Conover follow-ups.
 - Explicit handling of missing values, tied ranks, zero paired differences and frequency counts.
 - Descriptive statistics, available 95% confidence intervals and calculation notes.
 - A fictional example for every analysis.
@@ -48,14 +55,15 @@ Current work saves automatically in private device storage. The app restores app
 
 | Area | Analyses |
 | --- | --- |
-| Descriptives | Numeric summaries, percentiles, frequencies and histograms; category counts, percentages and mode |
+| Descriptives | Single/multiple-variable and grouped summaries, skewness, excess kurtosis, percentiles, frequencies, histograms and categorical bar charts |
 | Means | One-sample, independent-samples and paired-samples t tests |
-| Group means | One-way ANOVA; one-factor repeated-measures ANOVA |
-| Ranks | Mann–Whitney U, Wilcoxon signed-rank and Kruskal–Wallis H |
-| Frequencies | Chi-square goodness of fit and independence |
-| Association | Pearson and Spearman correlation |
+| Group means | One-way and factorial ANOVA, ANCOVA, one-factor repeated-measures ANOVA |
+| Ranks | Mann–Whitney U, Wilcoxon signed-rank, Kruskal–Wallis H and Friedman |
+| Frequencies | Chi-square goodness of fit and independence; Fisher's exact test for 2 × 2 tables |
+| Association | Pairwise Pearson and Spearman correlation; multiple-variable correlation matrices |
 | Prediction | Simple and multiple linear regression |
 | Reliability | Cronbach's alpha, one-factor McDonald's omega and item diagnostics |
+| Factor analysis | MINRES/principal axis EFA; Varimax/Promax; fixed, eigenvalue and parallel retention; KMO/MSA, Bartlett and scree plots |
 
 Mann–Whitney and Wilcoxon use exact probabilities for eligible small samples and corrected approximations otherwise. Zero paired differences are removed before Wilcoxon ranks are assigned. Spearman p-values use a labeled t approximation. Method notes identify the calculation used for each result.
 
@@ -73,16 +81,31 @@ These options start unchecked. Diagnostic p-values do not automatically change t
 
 ### Descriptives
 
-Choose **Descriptives** in **Analyze**, select a variable, and choose **Numeric** or **Categories / text**. Numeric data supports an optional weight column, sample or population variance and standard deviation, custom percentiles, and 1–50 histogram intervals. Leave the interval count blank for automatic selection.
+Choose **Descriptives** in **Analyze**, select 1–20 variables, and choose **Numeric** or **Categories / text**. The data type applies to all selected variables. **Split by** optionally summarizes each variable separately within a group. Numeric data supports an optional weight column, sample or population variance and standard deviation, custom percentiles, and 1–50 histogram intervals. Leave the interval count blank for automatic selection.
+
+Grouped results include an overview table and a **Detailed distribution** selector for the individual summaries, percentiles, histograms and frequency tables. Each variable uses its own non-missing observations; a missing answer in another variable does not remove a valid value. Groups with no valid values remain visible with N = 0. Blank group labels are excluded, while literal labels such as `NA` are retained. Use at most 40 groups and 200 variable/group combinations.
 
 - Weights affect **only the weighted mean**. Other statistics, frequencies and histogram bars count each non-missing row once. Missing and zero weights are omitted from the weighted mean; negative weights are rejected.
 - Sample variance uses `n − 1`; population variance uses `N`. Sample variance and standard deviation are unavailable with only one observation.
+- Skewness uses the adjusted Fisher–Pearson sample coefficient and needs at least three observations. Bias-corrected excess kurtosis needs at least four; its normal-distribution reference is zero. Both are unweighted, need nonconstant data, and retain their sample convention when the variance/SD option changes.
 - Percentiles use [R type 7 linear interpolation](https://stat.ethz.ch/R-manual/R-patched/library/stats/html/quantile.html). Up to 20 percentiles from 0 to 100 can be requested. Leave the field blank to omit the percentile table.
 - Tied modes are listed. Following a common introductory-course convention, no mode is reported when every distinct value has the same frequency. A repeated constant value is its own mode.
 - Histograms use equal-width intervals and the Sturges rule for automatic interval counts. Intervals include the lower boundary; the final interval also includes the upper boundary. Constant data produces one bar.
 - The screen shows up to 100 distinct values in the frequency table. The text report contains the complete table, including the histogram's interval counts.
+- In **Categories / text**, enable **Bar chart (category counts)** for frequency bars. Charts show the first 20 categories in label order; every category remains in the frequency tables and reports.
 
 Category summaries treat blanks as missing and retain text such as `NA` as a category. Descriptives reports do not include a hypothesis test or p-value.
+
+### Correlation matrices
+
+Choose **Correlation matrix**, select 2–20 numeric variables and choose **Pearson r** or **Spearman rho**. Results contain coefficient, two-sided p-value and sample-size matrices, followed by details for every distinct pair. Tables scroll sideways on the phone and are retained in text, PDF and HTML reports.
+
+- **Pairwise** uses available observations separately for each pair and reranks Spearman values within those rows. Each pair can have a different N.
+- **Listwise** uses the same complete rows across all selected variables. Other columns do not determine which rows are included.
+- Constant variables and insufficient data produce explained blank cells while retaining other results. Coefficients need at least two complete observations; p-values need at least three. P-values are unadjusted for multiple correlations, and Spearman uses a labeled t approximation.
+- Optional **95% Pearson confidence intervals** use Fisher's z approximation and need at least four complete observations. Spearman intervals are not provided. Self-correlations have no test or interval.
+
+Pairwise matrices need not be positive semidefinite, so they are not automatically suitable as input to factor analysis. Correlation does not establish causation. See [statistical conventions](docs/statistical-methods.md#correlation-matrices).
 
 ### Graphs
 
@@ -122,6 +145,36 @@ Optional paired follow-ups use **Holm-adjusted p-values** and **Bonferroni 95% f
   <img src="docs/screenshots/multiple-regression.png" alt="Multiple-regression coefficients and collinearity for fictional data" width="270">
   <img src="docs/screenshots/repeated-measures.png" alt="Repeated-measures sphericity corrections for fictional conditions" width="270">
 </p>
+
+### Fisher's exact test and categorical association
+
+Choose **Fisher's exact test (2 × 2)**, select the row and column category variables, and optionally select a frequency column. Without frequencies, each complete row is one observation. The table must have two nonempty categories in each variable. Exact tests support a total frequency up to 2,147,483,647 and at most 100,000 feasible tables under the fixed margins. Calculations beyond those limits produce an explanation. Chi-square independence may be suitable when its assumptions are met.
+
+For a 2 × 2 table, choose the **Comparison group** and **Event category**. The other group is the reference. Fisher's alternatives test whether the selected event's odds ratio differs from, exceeds, or is below one. Results include observed/expected counts, an exact p-value, the sample odds ratio, Cramér's V and a table of signed Phi, odds ratio and relative risk. The same association measures appear with 2 × 2 chi-square independence analyses; larger tables retain Cramér's V.
+
+Ratio intervals are approximate 95% log-Wald intervals. Odds-ratio intervals need four positive cells; relative-risk intervals need positive event counts in both groups. Zero cells retain defined boundary estimates such as zero or infinity, with an explanation for unavailable intervals. No automatic 0.5 correction is applied. Fisher's exact p-value and the approximate intervals are different calculations. Sample odds ratios can differ from conditional maximum-likelihood estimates.
+
+### Friedman test
+
+Use one row per participant and 3–12 numeric condition columns. Choose **Friedman test**, select the conditions and leave ID unselected. Results include the tied-rank chi-square approximation, degrees of freedom, p-value, Kendall's W, condition mean ranks and descriptive summaries. All results use the same complete participants. At least two complete participants are needed; the approximation can be unreliable with small samples or few conditions.
+
+Enable **Durbin–Conover follow-up comparisons** for signed mean-rank differences, standard errors, t statistics, raw p-values and adjusted p-values. **Holm** is the default; **Bonferroni** and **Unadjusted** are available. No residual rank variation makes follow-up tests unavailable while retaining a defined omnibus result. Optional boxplots use the same complete participants. Every option and result is included in saved work and reports. See [statistical conventions](docs/statistical-methods.md#friedman-and-follow-up-comparisons).
+
+### Factorial ANOVA and ANCOVA
+
+Use a numeric outcome and 2–3 categorical factors for **Factorial ANOVA**, or 1–3 factors plus 1–6 numeric covariates for **ANCOVA**. Numeric factor labels are treated as categories. Each factor can have 2–6 observed levels. Enable every factor interaction, including the three-way interaction with three factors, or choose an additive model.
+
+Type III sums of squares with sum-to-zero contrasts are the default. Type II and sequential Type I are selectable. Results include a term table with partial η², the overall model test and model fit. Estimated marginal means weight the other factor levels equally and hold covariates at their complete-case means. Optional pairwise comparisons offer Holm, Bonferroni or unadjusted p-values; the adjustment covers all displayed pairs together. Interpret interactions before averaged main effects.
+
+Optional checks cover residual normality, variance homogeneity across observed factor cells, residual plots and, for ANCOVA, homogeneity of regression slopes. The slope check compares common slopes with added factor-term × covariate interactions. Rank-deficient models, unusable residual variation and calculations beyond the phone's model-size limits produce an explanation. See [model definitions and limits](docs/statistical-methods.md#factorial-anova-and-ancova).
+
+### Exploratory factor analysis
+
+Select 3–20 numeric items for **Exploratory factor analysis**. Choose MINRES or principal axis extraction, then no rotation, orthogonal Varimax or oblique Promax. Promax permits factor correlations and reports both pattern and structure matrices. The loading threshold changes only what is displayed. Negatively keyed items must be reverse-scored in Data when appropriate.
+
+Factor count can be fixed, selected by an eigenvalue threshold or suggested by parallel analysis. Parallel analysis uses 200 Gaussian null correlation samples and their 95th-percentile eigenvalues, with a fixed seed for repeatable results. This PCA-eigenvalue retention rule differs from jamovi's common-factor parallel analysis; no factor is forced when the suggestion is zero. Supported counts have nonnegative nominal model degrees of freedom, up to six factors.
+
+Results include observed eigenvalues, loadings, communalities, uniquenesses, factor correlations and residual correlation fit. Optional KMO/MSA, Bartlett's sphericity test and a scree plot aid interpretation. Uses one complete-case sample with at least max(10, variables + 1) observations and Pearson correlations; ordinal/polychoric EFA is not included. See [extraction, rotation and retention conventions](docs/statistical-methods.md#exploratory-factor-analysis).
 
 ### PDF and HTML reports
 
@@ -205,3 +258,9 @@ Imports and exports use Android's document picker. Exported files are written to
 Install the pocketomv APK on a phone running Android 8.0 or newer. Open the APK in your file manager and allow installation from that source when Android asks.
 
 To update, install the newer APK over the existing app to retain saved work.
+
+## License and acknowledgments
+
+pocketomv's own code is available under the [MIT license](LICENSE). Third-party components retain their licenses and notices; see [acknowledgments](THIRD_PARTY_NOTICES.md). Tap **Licenses** in the app to read the included texts.
+
+pocketomv is an independent application. It does not bundle jamovi or its R runtime and is not affiliated with or endorsed by the jamovi project. Supported methods and numerical conventions are described in the [statistical guide](docs/statistical-methods.md); identical results across every option and dataset are not claimed.

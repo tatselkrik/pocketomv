@@ -27,7 +27,12 @@ Thumbs.db
 # Signing material and generated installers
 *.jks
 *.keystore
+*.pem
+*.key
+*.p12
+*.pfx
 keystore.properties
+signing.properties
 *.apk
 *.aab
 
@@ -38,4 +43,12 @@ keystore.properties
 *.xls
 *.omv
 *.sav
+*.dta
+*.rds
+*.rdata
+*.sas7bdat
+*.docx
+*.pptx
+*.pdf
+*-session.json
 !app/src/test/resources/**

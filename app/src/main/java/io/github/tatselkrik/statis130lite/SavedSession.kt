@@ -81,6 +81,35 @@ internal object SessionCodec {
             .put("showItemCorrelations", request.showItemCorrelations)
             .put("repeatedCorrection", request.repeatedCorrection.name)
             .put("repeatedComparisons", request.repeatedComparisons)
+            .put("descriptiveVariables", request.descriptiveVariables?.let(::JSONArray) ?: JSONObject.NULL)
+            .put("splitBy", request.splitBy ?: JSONObject.NULL)
+            .put("showBarChart", request.showBarChart)
+            .put("correlationVariables", JSONArray(request.correlationVariables))
+            .put("correlationKind", request.correlationKind.name)
+            .put("correlationMissing", request.correlationMissing.name)
+            .put("correlationConfidence", request.correlationConfidence)
+            .put("comparisonGroup", request.comparisonGroup)
+            .put("eventCategory", request.eventCategory)
+            .put("friedmanComparisons", request.friedmanComparisons)
+            .put("friedmanAdjustment", request.friedmanAdjustment.name)
+            .put("factors", JSONArray(request.factors))
+            .put("covariates", JSONArray(request.covariates))
+            .put("factorInteractions", request.factorInteractions)
+            .put("sumsOfSquares", request.sumsOfSquares.name)
+            .put("modelMarginalMeans", request.modelMarginalMeans)
+            .put("modelComparisons", request.modelComparisons)
+            .put("modelAdjustment", request.modelAdjustment.name)
+            .put("checkSlopes", request.checkSlopes)
+            .put("factorCountMethod", request.factorCountMethod.name)
+            .put("factorCount", request.factorCount)
+            .put("factorEigenvalue", request.factorEigenvalue)
+            .put("factorExtraction", request.factorExtraction.name)
+            .put("factorRotation", request.factorRotation.name)
+            .put("factorLoadingCutoff", request.factorLoadingCutoff)
+            .put("factorSortLoadings", request.factorSortLoadings)
+            .put("factorScreePlot", request.factorScreePlot)
+            .put("factorKmo", request.factorKmo)
+            .put("factorBartlett", request.factorBartlett)
         json.put("pendingExport", session.pendingExport?.name ?: JSONObject.NULL)
         state.data?.let { data ->
             val rows = JSONArray()
@@ -157,6 +186,35 @@ internal object SessionCodec {
                 showItemCorrelations = if (request.has("showItemCorrelations")) request.flag("showItemCorrelations") else false,
                 repeatedCorrection = if (request.has("repeatedCorrection")) RepeatedCorrection.valueOf(request.text("repeatedCorrection")) else RepeatedCorrection.GREENHOUSE_GEISSER,
                 repeatedComparisons = if (request.has("repeatedComparisons")) request.flag("repeatedComparisons") else false,
+                descriptiveVariables = if (request.isNull("descriptiveVariables")) null else request.indices("descriptiveVariables"),
+                splitBy = if (request.isNull("splitBy")) null else request.integer("splitBy"),
+                showBarChart = if (request.has("showBarChart")) request.flag("showBarChart") else false,
+                correlationVariables = request.indices("correlationVariables"),
+                correlationKind = if (request.has("correlationKind")) CorrelationKind.valueOf(request.text("correlationKind")) else CorrelationKind.PEARSON,
+                correlationMissing = if (request.has("correlationMissing")) CorrelationMissing.valueOf(request.text("correlationMissing")) else CorrelationMissing.PAIRWISE,
+                correlationConfidence = if (request.has("correlationConfidence")) request.flag("correlationConfidence") else false,
+                comparisonGroup = if (request.has("comparisonGroup")) request.text("comparisonGroup") else "",
+                eventCategory = if (request.has("eventCategory")) request.text("eventCategory") else "",
+                friedmanComparisons = if (request.has("friedmanComparisons")) request.flag("friedmanComparisons") else false,
+                friedmanAdjustment = if (request.has("friedmanAdjustment")) FriedmanAdjustment.valueOf(request.text("friedmanAdjustment")) else FriedmanAdjustment.HOLM,
+                factors = request.indices("factors"),
+                covariates = request.indices("covariates"),
+                factorInteractions = if (request.has("factorInteractions")) request.flag("factorInteractions") else true,
+                sumsOfSquares = if (request.has("sumsOfSquares")) SumsOfSquares.valueOf(request.text("sumsOfSquares")) else SumsOfSquares.III,
+                modelMarginalMeans = if (request.has("modelMarginalMeans")) request.flag("modelMarginalMeans") else true,
+                modelComparisons = if (request.has("modelComparisons")) request.flag("modelComparisons") else false,
+                modelAdjustment = if (request.has("modelAdjustment")) FriedmanAdjustment.valueOf(request.text("modelAdjustment")) else FriedmanAdjustment.HOLM,
+                checkSlopes = if (request.has("checkSlopes")) request.flag("checkSlopes") else false,
+                factorCountMethod = if (request.has("factorCountMethod")) FactorCountMethod.valueOf(request.text("factorCountMethod")) else FactorCountMethod.PARALLEL,
+                factorCount = if (request.has("factorCount")) request.text("factorCount") else "1",
+                factorEigenvalue = if (request.has("factorEigenvalue")) request.text("factorEigenvalue") else "1",
+                factorExtraction = if (request.has("factorExtraction")) FactorExtraction.valueOf(request.text("factorExtraction")) else FactorExtraction.MINRES,
+                factorRotation = if (request.has("factorRotation")) FactorRotation.valueOf(request.text("factorRotation")) else FactorRotation.VARIMAX,
+                factorLoadingCutoff = if (request.has("factorLoadingCutoff")) request.text("factorLoadingCutoff") else "0.30",
+                factorSortLoadings = if (request.has("factorSortLoadings")) request.flag("factorSortLoadings") else false,
+                factorScreePlot = if (request.has("factorScreePlot")) request.flag("factorScreePlot") else false,
+                factorKmo = if (request.has("factorKmo")) request.flag("factorKmo") else true,
+                factorBartlett = if (request.has("factorBartlett")) request.flag("factorBartlett") else true,
             ),
         )
         return SavedSession(
@@ -169,15 +227,20 @@ internal object SessionCodec {
         val state = session.screen
         val request = state.request
         val text = listOf(state.draft, state.appliedDraft, state.source, request.reference,
-            request.expectedWeights, request.percentiles, request.histogramBins, request.qqSample) + state.preparationNotes
+            request.expectedWeights, request.percentiles, request.histogramBins, request.qqSample,
+            request.comparisonGroup, request.eventCategory) + state.preparationNotes
         require(text.all { it.length <= MAX_TEXT }) { "A saved text field is too large." }
         require(state.preparationNotes.size <= 60) { "The saved preparation notes are too large." }
-        require(request.items.size <= 60 && request.predictors.size <= 12 && listOf(request.items, request.predictors).all {
+        require(request.items.size <= 60 && request.predictors.size <= 12 &&
+            (request.descriptiveVariables?.size ?: 0) <= 20 && request.correlationVariables.size <= 20 && request.factors.size <= 3 && request.covariates.size <= 6 &&
+            listOfNotNull(request.items, request.predictors, request.descriptiveVariables, request.correlationVariables, request.factors, request.covariates).all {
             it.distinct().size == it.size && it.all { index -> index in 0..59 }
         }) { "The saved column list is invalid." }
+        require(listOf(request.factorCount, request.factorEigenvalue, request.factorLoadingCutoff).all { it.length <= 64 }) { "The saved factor option is too large." }
         require(request.first in 0..59 && request.second in 0..59 &&
             (request.count == null || request.count in 0..59) &&
             (request.weight == null || request.weight in 0..59)
+            && (request.splitBy == null || request.splitBy in 0..59)
         ) { "The saved column selection is invalid." }
         state.data?.let { data ->
             require(data.columns.size in 1..60 && data.rows.size in 1..20_000 &&

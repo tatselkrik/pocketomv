@@ -126,6 +126,8 @@ private fun StatisticsApp(model: AnalysisViewModel) {
     val focus = LocalFocusManager.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
+    var licensesOpen by remember { mutableStateOf(false) }
+    if (licensesOpen) LicenseNotices { licensesOpen = false }
     val resolver = context.applicationContext.contentResolver
     val openData = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) model.importData(resolver, uri)
@@ -161,6 +163,7 @@ private fun StatisticsApp(model: AnalysisViewModel) {
                 ) {
                     Text("pocketomv", Modifier.weight(1f).padding(end = 12.dp),
                         style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    TextButton(onClick = { licensesOpen = true }) { Text("Licenses") }
                 }
                 if (state.busy != null) {
                     LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -366,21 +369,26 @@ private fun AnalysisScreen(state: AnalysisScreenState, model: AnalysisViewModel,
             item {
                 Panel {
                     val columns = data.columns.mapIndexed { index, name -> index to name }
-                    if (!request.method.usesItemSelection) ChoiceField(request.method.firstLabel, request.first, columns, enabled) {
+                    if (!request.method.usesVariableSelection) ChoiceField(request.method.firstLabel, request.first, columns, enabled) {
                         model.configure(if (request.method == AnalysisMethod.DESCRIPTIVES) request.copy(
                             first = it, weight = request.weight.takeUnless { weight -> weight == it },
                             descriptiveNumeric = it in data.numericColumns(),
                             showBoxplot = it in data.numericColumns() && request.showBoxplot,
                             showQQPlot = it in data.numericColumns() && request.showQQPlot,
-                        ) else request.copy(first = it, predictors = request.predictors.filterNot { predictor -> predictor == it }))
+                        ) else request.copy(first = it, predictors = request.predictors.filterNot { predictor -> predictor == it },
+                            factors = request.factors - it, covariates = request.covariates - it,
+                            comparisonGroup = "", eventCategory = ""))
                     }
                     request.method.secondLabel?.let { label ->
                         ChoiceField(label, request.second, columns, enabled) {
-                            model.configure(request.copy(second = it))
+                            model.configure(request.copy(second = it, comparisonGroup = "", eventCategory = ""))
                         }
                     }
                     if (request.method == AnalysisMethod.DESCRIPTIVES) {
                         DescriptiveOptions(data, request, enabled, model::configure)
+                    }
+                    if (request.method == AnalysisMethod.CORRELATION_MATRIX) {
+                        CorrelationOptions(data, request, enabled, model::configure)
                     }
                     if (request.method.usesCounts) {
                         val choices: List<Pair<Int?, String>> = listOf(null to "One row = one observation") + columns
@@ -410,6 +418,7 @@ private fun AnalysisScreen(state: AnalysisScreenState, model: AnalysisViewModel,
                             request.method.usesGroups -> "Directional tests compare the first group with the second. Numeric group labels are ordered numerically, and text labels alphabetically."
                             request.method == AnalysisMethod.ONE_SAMPLE_T -> "Compares the sample mean with the reference mean."
                             request.method == AnalysisMethod.PEARSON || request.method == AnalysisMethod.SPEARMAN -> "Tests a correlation equal to zero."
+                            request.method == AnalysisMethod.FISHER_EXACT -> "Directional alternatives test the comparison-group/event odds ratio against one. Review the group and event choices below."
                             else -> "Paired differences are first measurement minus second measurement."
                         }, style = MaterialTheme.typography.bodySmall)
                     }
@@ -476,7 +485,11 @@ private fun ResultsScreen(
             item { PageHeading("YOUR RESULTS", result.method.title, result.calculation) }
             item { DatasetSummary(state) }
             graphItems(result, state.request.qqSample, state.busy == null, model::selectQQSample)
-            result.descriptives?.let { descriptiveItems(it) }
+            if (result.method == AnalysisMethod.DESCRIPTIVES) result.tables.forEach { table -> item {
+                TitledTable(table.title, table.headers, table.rows)
+                table.notes.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+            } }
+            descriptiveItems(result.descriptions)
             if (result.test != null) item {
                 Panel {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
@@ -518,7 +531,7 @@ private fun ResultsScreen(
                     table.rowLabels.indices.map { listOf(table.rowLabels[it]) + table.expected[it].map(::formatStatistic) }) }
             }
             meanCheckItems(result)
-            result.tables.forEach { table -> item {
+            if (result.method != AnalysisMethod.DESCRIPTIVES) result.tables.forEach { table -> item {
                 TitledTable(table.title, table.headers, table.rows)
                 table.notes.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
             } }

@@ -49,14 +49,14 @@ internal fun PlotOptions(request: AnalysisRequest, enabled: Boolean, onChange: (
             CheckOption("Normal Q–Q plot", request.showQQPlot, enabled) { onChange(request.copy(showQQPlot = it)) }
             Text(when (request.method) {
                 AnalysisMethod.PAIRED_T -> "Q–Q plots use the differences within complete pairs."
-                AnalysisMethod.MULTIPLE_REGRESSION -> "Q–Q plots use model residuals."
+                AnalysisMethod.MULTIPLE_REGRESSION, AnalysisMethod.FACTORIAL_ANOVA, AnalysisMethod.ANCOVA -> "Q–Q plots use model residuals."
                 AnalysisMethod.INDEPENDENT_T, AnalysisMethod.ANOVA -> "Q–Q plots are available separately for each group."
                 else -> "Compare the sample's distribution with normal quantiles."
             }, style = MaterialTheme.typography.bodySmall)
         }
         if (request.method.supportsScatterplot) {
-            CheckOption(if (request.method == AnalysisMethod.MULTIPLE_REGRESSION) "Residuals vs fitted" else "Scatterplot", request.showScatterplot, enabled) { onChange(request.copy(showScatterplot = it)) }
-            Text(if (request.method == AnalysisMethod.MULTIPLE_REGRESSION) "Plots model residuals against fitted outcome values."
+            CheckOption(if (request.method.usesResiduals) "Residuals vs fitted" else "Scatterplot", request.showScatterplot, enabled) { onChange(request.copy(showScatterplot = it)) }
+            Text(if (request.method.usesResiduals) "Plots model residuals against fitted outcome values."
                 else if (request.method == AnalysisMethod.REGRESSION) "Plots complete pairs with the fitted regression line."
                 else "Plots the original values of complete pairs, including for Spearman correlation.",
                 style = MaterialTheme.typography.bodySmall)
@@ -66,6 +66,7 @@ internal fun PlotOptions(request: AnalysisRequest, enabled: Boolean, onChange: (
 
 internal fun LazyListScope.graphItems(result: AnalysisResult, selectedQQ: String, enabled: Boolean, onSelect: (String) -> Unit) {
     val plots = result.plots ?: return
+    plots.scree?.let { scree -> item { ScreeChart(scree) } }
     if (plots.boxes.isNotEmpty()) {
         item { BoxplotChart(plots.boxes) }
         item { TitledTable("Boxplot summaries", boxplotHeaders, plots.boxes.map { it.displayRow() }) }
@@ -87,7 +88,7 @@ internal fun LazyListScope.graphItems(result: AnalysisResult, selectedQQ: String
         }
     }
     plots.scatter?.let { scatter -> item {
-        GraphCard(if (result.method == AnalysisMethod.MULTIPLE_REGRESSION) "Residuals vs fitted" else "Scatterplot") {
+        GraphCard(if (result.method.usesResiduals) "Residuals vs fitted" else "Scatterplot") {
             Text("${scatter.points.size} complete pairs · ${scatter.yLabel} vs ${scatter.xLabel}", style = MaterialTheme.typography.bodyMedium)
             PointsChart(scatter.points, "X · ${scatter.xLabel}", "Y · ${scatter.yLabel}", scatter.fittedLine,
                 "Scatterplot of ${scatter.yLabel} against ${scatter.xLabel}, ${scatter.points.size} complete pairs" +
@@ -97,6 +98,40 @@ internal fun LazyListScope.graphItems(result: AnalysisResult, selectedQQ: String
                 style = MaterialTheme.typography.bodySmall)
         }
     } }
+}
+
+@Composable
+private fun ScreeChart(plot: ScreePlot) {
+    val ink = MaterialTheme.colorScheme.primary
+    val comparison = MaterialTheme.colorScheme.tertiary
+    val axis = MaterialTheme.colorScheme.outline
+    val plotHeight = graphHeight()
+    val y = PlotAxis(0.0, (plot.observed + plot.parallel95).max().coerceAtLeast(1.0))
+    GraphCard("Scree plot") {
+        Text("Correlation eigenvalues", style = MaterialTheme.typography.labelMedium)
+        Row(Modifier.fillMaxWidth()) {
+            AxisLabels(y, Modifier.width(88.dp).height(plotHeight).padding(end = 8.dp))
+            Canvas(Modifier.weight(1f).height(plotHeight).semantics {
+                contentDescription = "Scree plot of ${plot.observed.size} observed correlation eigenvalues" +
+                    if (plot.parallel95.isNotEmpty()) " and parallel-analysis 95th-percentile thresholds. Exact values are in the eigenvalue table." else ". Exact values are in the eigenvalue table."
+            }) {
+                val left = 6.dp.toPx(); val right = size.width - 6.dp.toPx()
+                val top = 6.dp.toPx(); val bottom = size.height - 6.dp.toPx()
+                for (fraction in listOf(0f, 0.5f, 1f)) drawLine(axis.copy(alpha = 0.3f), Offset(left, bottom - (bottom - top) * fraction), Offset(right, bottom - (bottom - top) * fraction))
+                fun curve(values: List<Double>, color: Color, squares: Boolean) {
+                    val points = values.mapIndexed { i, value -> Offset(left + (right - left) * i / (plot.observed.size - 1), bottom - (bottom - top) * y.fraction(value).toFloat()) }
+                    points.zipWithNext().forEach { (a, b) -> drawLine(color, a, b, 2.dp.toPx()) }
+                    points.forEach { point -> if (squares) drawRect(color, Offset(point.x - 2.dp.toPx(), point.y - 2.dp.toPx()), Size(4.dp.toPx(), 4.dp.toPx())) else drawCircle(color, 3.dp.toPx(), point) }
+                }
+                curve(plot.observed, ink, false)
+                if (plot.parallel95.isNotEmpty()) curve(plot.parallel95, comparison, true)
+            }
+        }
+        Text("Eigenvalue order · 1 to ${plot.observed.size}", Modifier.fillMaxWidth(), style = MaterialTheme.typography.labelMedium, textAlign = TextAlign.Center)
+        Text("● Observed eigenvalues", color = ink, style = MaterialTheme.typography.bodySmall)
+        if (plot.parallel95.isNotEmpty()) Text("■ Parallel null 95th percentile", color = comparison, style = MaterialTheme.typography.bodySmall)
+        Text("The eigenvalue table retains every plotted value. Factor retention also needs substantive interpretation.", style = MaterialTheme.typography.bodySmall)
+    }
 }
 
 internal val boxplotHeaders = listOf("Sample", "N", "Q1", "Median", "Q3", "Lower whisker", "Upper whisker", "Outliers")

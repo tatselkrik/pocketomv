@@ -218,9 +218,13 @@ internal fun AnalysisScreenState.withTableChange(change: TableChange): AnalysisS
         fun remap(index: Int): Int? = if (index == removed) null else if (index > removed) index - 1 else index
         val first = remap(request.first)
         val second = remap(request.second)
-        if ((!request.method.usesItemSelection && first == null) || (request.method.secondLabel != null && second == null)) AnalysisRequest.forData(request.method, table)
+        if ((!request.method.usesVariableSelection && first == null) || (request.method.secondLabel != null && second == null)) AnalysisRequest.forData(request.method, table)
         else request.copy(first = first ?: 0, second = second ?: first ?: 0, count = request.count?.let(::remap), weight = request.weight?.let(::remap),
-            items = request.items.mapNotNull(::remap), predictors = request.predictors.mapNotNull(::remap))
+            items = request.items.mapNotNull(::remap), predictors = request.predictors.mapNotNull(::remap),
+            factors = request.factors.mapNotNull(::remap), covariates = request.covariates.mapNotNull(::remap),
+            descriptiveVariables = request.descriptiveVariables?.mapNotNull(::remap)
+                ?: if (request.method == AnalysisMethod.DESCRIPTIVES && first == null) emptyList() else null,
+            splitBy = request.splitBy?.let(::remap), correlationVariables = request.correlationVariables.mapNotNull(::remap))
     }
     val text = table.asCsv()
     return copy(data = table, draft = text, appliedDraft = text, firstRowHasNames = true, appliedNames = true,

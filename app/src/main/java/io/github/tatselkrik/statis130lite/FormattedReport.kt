@@ -19,20 +19,31 @@ internal fun AnalysisResult.formattedReport(source: String, fictional: Boolean, 
         paragraph("${includedCases} included · ${excludedRows} rows excluded")
         test?.let { t -> table("Main analysis", listOf(t.label, "df", "p"), listOf(listOf(formatStatistic(t.statistic),
             degreesOfFreedom.joinToString { formatStatistic(it) }.ifEmpty { "—" }, formatProbability(t.pValue)))) }
-        descriptives?.let { summary ->
-            table("Summary · ${summary.variable}", listOf("Measure", "Value"), summary.summaryRows())
+        if (method == AnalysisMethod.DESCRIPTIVES) tables.forEach { add(ReportBlock.Table(it)) }
+        descriptions.forEach { summary ->
+            fun detailTitle(base: String) = if (descriptions.size > 1) "$base · ${summary.label}" else base
+            table("Summary · ${summary.label}", listOf("Measure", "Value"), summary.summaryRows())
             summary.numeric?.let { numeric ->
-                if (numeric.percentiles.isNotEmpty()) table("Percentiles · R type 7", listOf("Percentile", "Value"),
+                if (numeric.percentiles.isNotEmpty()) table(detailTitle("Percentiles · R type 7"), listOf("Percentile", "Value"),
                     numeric.percentiles.map { listOf(formatStatistic(it.percent), formatStatistic(it.value)) })
-                add(ReportBlock.Figure("Histogram · ${summary.variable}", ReportCharts.histogram(numeric.histogram, summary.variable),
-                    "Variable: ${summary.variable}. Unweighted frequencies. The final interval includes its upper boundary."))
-                table("Histogram intervals", listOf("Interval", "Count"), numeric.histogram.mapIndexed { i, bin ->
+                add(ReportBlock.Figure("Histogram · ${summary.label}", ReportCharts.histogram(numeric.histogram, summary.label),
+                    "Variable/group: ${summary.label}. Unweighted frequencies. The final interval includes its upper boundary."))
+                table(detailTitle("Histogram intervals"), listOf("Interval", "Count"), numeric.histogram.mapIndexed { i, bin ->
                     listOf(bin.intervalLabel(i == numeric.histogram.lastIndex), bin.count.toString())
                 })
             }
-            table("Value frequencies", listOf("Value", "Count", "Percent"), summary.frequencies.map {
+            if (summary.showBarChart && summary.frequencies.isNotEmpty()) {
+                summary.frequencies.take(20).chunked(10).forEachIndexed { index, values ->
+                    add(ReportBlock.Figure("Bar chart · ${summary.label} · ${index + 1}",
+                        ReportCharts.bars(values, summary.frequencies.maxOf { it.count }),
+                        "Category counts on a shared frequency scale; labels are shortened in the figure and given in full in the frequency table." +
+                            if (summary.frequencies.size > 20) " Figures show the first 20 categories in label order. The table retains every category." else ""))
+                }
+            }
+            table(detailTitle("Value frequencies"), listOf("Value", "Count", "Percent"), summary.frequencies.map {
                 listOf(it.value, it.count.toString(), formatStatistic(it.percent))
             })
+            summary.notes.forEach { paragraph(it) }
         }
         if (estimates.isNotEmpty()) table("Estimates", listOf("Parameter", "Estimate", "95% CI"), estimates.map {
             listOf(it.label, formatStatistic(it.value), it.confidenceInterval())
@@ -57,8 +68,10 @@ internal fun AnalysisResult.formattedReport(source: String, fictional: Boolean, 
             if (comparisons.unavailable != null) paragraph("${comparisons.method}: ${comparisons.unavailable}") else
                 table("Pairwise comparisons · ${comparisons.method}", pairwiseHeaders, comparisons.comparisons.map { it.displayRow() }, listOf(comparisons.note))
         }
-        tables.forEach { add(ReportBlock.Table(it)) }
+        if (method != AnalysisMethod.DESCRIPTIVES) tables.forEach { add(ReportBlock.Table(it)) }
         plots?.let { plots ->
+            plots.scree?.let { add(ReportBlock.Figure("Scree plot", ReportCharts.scree(it),
+                "Correlation eigenvalues in descending order. Parallel thresholds, when shown, are the 95th percentile of 200 Gaussian null correlation samples of the same N and variable count. Every value is retained in the eigenvalue table.")) }
             if (plots.boxes.isNotEmpty()) {
                 table("Boxplot summaries", boxplotHeaders, plots.boxes.map { it.displayRow() })
                 val axis = PlotAxis(plots.boxes.minOf { it.minimum }, plots.boxes.maxOf { it.maximum })
@@ -72,7 +85,7 @@ internal fun AnalysisResult.formattedReport(source: String, fictional: Boolean, 
                     "N = ${qq.size}. Quartile reference line; appearance alone does not establish normality."))
             }
             plots.scatter?.let { scatter -> add(ReportBlock.Figure(
-                if (method == AnalysisMethod.MULTIPLE_REGRESSION) "Residuals vs fitted" else "Scatterplot",
+                if (method.usesResiduals) "Residuals vs fitted" else "Scatterplot",
                 ReportCharts.points(scatter.points, "X · ${scatter.xLabel}", "Y · ${scatter.yLabel}", scatter.fittedLine),
                 "X: ${scatter.xLabel}. Y: ${scatter.yLabel}. ${scatter.points.size} complete observations. All points included; overlaps share markers." +
                     if (scatter.fittedLine != null) " Line: fitted least-squares regression." else "")) }
