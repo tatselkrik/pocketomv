@@ -16,6 +16,7 @@ local.properties
 AGENTS.md
 memory.md
 memory.archive.md
+ROADMAP.md
 work/
 tmp/
 *.log

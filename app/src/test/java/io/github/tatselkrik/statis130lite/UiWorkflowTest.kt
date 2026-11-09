@@ -17,7 +17,11 @@ class UiWorkflowTest {
                 .let { if (method == AnalysisMethod.ONE_SAMPLE_T) it.copy(reference = "8") else it }
             val result = Statistics.run(data, request)
             assertEquals(method, result.method)
-            assertTrue(method.title, result.pValue in 0.0..1.0)
+            if (method == AnalysisMethod.DESCRIPTIVES) {
+                assertTrue(result.test == null && result.descriptives != null)
+            } else if (method == AnalysisMethod.RELIABILITY) {
+                assertTrue(result.test == null && result.tables.isNotEmpty())
+            } else assertTrue(method.title, result.pValue in 0.0..1.0)
             assertEquals(0, result.excludedRows)
         }
     }

@@ -40,12 +40,13 @@ data class FrequencyTable(
     val expected: List<List<Double>>,
 )
 
+data class TestResult(val label: String, val statistic: Double, val pValue: Double)
+data class AnalysisTable(val title: String, val headers: List<String>, val rows: List<List<String>>, val notes: List<String> = emptyList())
+
 data class AnalysisResult(
     val method: AnalysisMethod,
     val calculation: String,
-    val statisticLabel: String,
-    val statistic: Double,
-    val pValue: Double,
+    val test: TestResult?,
     val includedCases: Long,
     val excludedRows: Int,
     val degreesOfFreedom: List<Double> = emptyList(),
@@ -53,7 +54,30 @@ data class AnalysisResult(
     val samples: List<SampleSummary> = emptyList(),
     val frequencies: FrequencyTable? = null,
     val notes: List<String> = emptyList(),
-)
+    val descriptives: DescriptiveSummary? = null,
+    val assumptionChecks: List<AssumptionCheck> = emptyList(),
+    val followUp: FollowUpResult? = null,
+    val plots: AnalysisPlots? = null,
+    val tables: List<AnalysisTable> = emptyList(),
+) {
+    constructor(
+        method: AnalysisMethod, calculation: String, statisticLabel: String, statistic: Double,
+        pValue: Double, includedCases: Long, excludedRows: Int,
+        degreesOfFreedom: List<Double> = emptyList(), estimates: List<Estimate> = emptyList(),
+        samples: List<SampleSummary> = emptyList(), frequencies: FrequencyTable? = null,
+        notes: List<String> = emptyList(),
+    ) : this(method, calculation, TestResult(statisticLabel, statistic, pValue), includedCases,
+        excludedRows, degreesOfFreedom, estimates, samples, frequencies, notes)
+
+    init {
+        require((test == null) == (method == AnalysisMethod.DESCRIPTIVES || method == AnalysisMethod.RELIABILITY))
+        require((method == AnalysisMethod.DESCRIPTIVES) == (descriptives != null))
+    }
+
+    val statisticLabel: String get() = requireNotNull(test).label
+    val statistic: Double get() = requireNotNull(test).statistic
+    val pValue: Double get() = requireNotNull(test).pValue
+}
 
 /** Stateless calculations. Only columns selected in the request take part in row exclusion. */
 object Statistics {
@@ -61,6 +85,9 @@ object Statistics {
         orderedLabels(frequencyRecords(data, request).map { it.first })
 
     fun run(data: CourseData, request: AnalysisRequest): AnalysisResult {
+        require(!request.checkNormality || request.method.supportsNormalityCheck) { "Normality checks are available for t tests and one-way ANOVA." }
+        require(!request.checkVariances || request.method.supportsVarianceCheck) { "Levene's check requires independent groups." }
+        require(!request.pairwiseComparisons || request.method == AnalysisMethod.ANOVA) { "Pairwise follow-ups are available for one-way ANOVA." }
         require(data.columns.isNotEmpty() && data.rows.isNotEmpty()) { "Add data before running an analysis." }
         require(data.rows.all { it.size == data.columns.size }) { "Every data row must have the same number of columns." }
         require(data.rows.size <= 20_000 && data.columns.size <= 60 &&
@@ -79,6 +106,7 @@ object Statistics {
         }
 
         val result = when (request.method) {
+            AnalysisMethod.DESCRIPTIVES -> Descriptives.calculate(data, request)
             AnalysisMethod.ONE_SAMPLE_T -> oneSample(data, request)
             AnalysisMethod.INDEPENDENT_T -> independent(data, request)
             AnalysisMethod.PAIRED_T -> paired(data, request)
@@ -90,9 +118,14 @@ object Statistics {
             AnalysisMethod.CHI_INDEPENDENCE -> independence(data, request)
             AnalysisMethod.PEARSON, AnalysisMethod.SPEARMAN -> correlation(data, request)
             AnalysisMethod.REGRESSION -> regression(data, request)
+            AnalysisMethod.RELIABILITY -> ReliabilityAnalysis.run(data, request)
+            AnalysisMethod.MULTIPLE_REGRESSION -> MultipleRegression.run(data, request)
+            AnalysisMethod.REPEATED_ANOVA -> RepeatedAnova.run(data, request)
         }
-        require(!result.statistic.isNaN() && result.pValue.isFinite() && result.pValue in 0.0..1.0) {
-            "These values do not produce a defined test. Check the sample sizes and variation."
+        result.test?.let { test ->
+            require(!test.statistic.isNaN() && test.pValue.isFinite() && test.pValue in 0.0..1.0) {
+                "These values do not produce a defined test. Check the sample sizes and variation."
+            }
         }
         require(result.estimates.all { estimate ->
             estimate.value.isFinite() && estimate.lower95?.isFinite() != false &&
@@ -101,7 +134,8 @@ object Statistics {
         val missingNote = if (result.excludedRows > 0) {
             listOf("${result.excludedRows} data rows were excluded because selected values were missing.")
         } else emptyList()
-        return result.copy(notes = result.notes + missingNote)
+        val extended = PlotCalculator.attach(data, request, MeanDiagnostics.attach(data, request, result))
+        return extended.copy(notes = extended.notes + missingNote)
     }
 
     private fun oneSample(data: CourseData, request: AnalysisRequest): AnalysisResult {
@@ -479,7 +513,7 @@ object Statistics {
         )
     }
 
-    private fun number(data: CourseData, row: Int, column: Int): Double {
+    internal fun number(data: CourseData, row: Int, column: Int): Double {
         val value = data.rows[row][column].trim().toDoubleOrNull()
         require(value != null && value.isFinite() && abs(value) <= MAX_MAGNITUDE) {
             "Enter a finite number in ${data.columns[column]} at data row ${row + 1}. Values must have magnitude at most 1e150."
@@ -487,15 +521,15 @@ object Statistics {
         return if (value == 0.0) 0.0 else value
     }
 
-    private fun readNumbers(data: CourseData, column: Int): DoubleArray =
+    internal fun readNumbers(data: CourseData, column: Int): DoubleArray =
         data.rows.indices.filterNot { data.rows[it][column].isMissingNumber() }
             .map { number(data, it, column) }.toDoubleArray()
 
-    private data class Pairs(val first: DoubleArray, val second: DoubleArray) {
+    internal data class Pairs(val first: DoubleArray, val second: DoubleArray) {
         fun differences(): DoubleArray = DoubleArray(first.size) { first[it] - second[it] }
     }
 
-    private fun readPairs(data: CourseData, request: AnalysisRequest): Pairs {
+    internal fun readPairs(data: CourseData, request: AnalysisRequest): Pairs {
         val rows = data.rows.indices.filterNot {
             data.rows[it][request.first].isMissingNumber() || data.rows[it][request.second].isMissingNumber()
         }
@@ -506,9 +540,9 @@ object Statistics {
         )
     }
 
-    private data class Group(val label: String, val values: DoubleArray)
+    internal data class Group(val label: String, val values: DoubleArray)
 
-    private fun readGroups(data: CourseData, request: AnalysisRequest): List<Group> {
+    internal fun readGroups(data: CourseData, request: AnalysisRequest): List<Group> {
         val groups = linkedMapOf<String, MutableList<Double>>()
         data.rows.indices.forEach { row ->
             val label = data.rows[row][request.second].trim()
@@ -568,7 +602,7 @@ object Statistics {
 
     private fun variance(values: DoubleArray): Double = Variance.of(*values).asDouble
 
-    private fun summary(label: String, values: DoubleArray): SampleSummary {
+    internal fun summary(label: String, values: DoubleArray): SampleSummary {
         val sorted = values.sorted()
         val middle = sorted.size / 2
         val median = if (sorted.size % 2 == 1) sorted[middle] else sorted[middle - 1] / 2.0 + sorted[middle] / 2.0

@@ -19,13 +19,15 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -134,6 +136,8 @@ private fun StatisticsApp(model: AnalysisViewModel) {
     val saveReport = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
         model.finishExport(resolver, uri)
     }
+    val saveHtml = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/html")) { uri -> model.finishExport(resolver, uri) }
+    val savePdf = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri -> model.finishExport(resolver, uri) }
     LaunchedEffect(state.message) {
         state.message?.let {
             snackbar.showSnackbar(it)
@@ -145,10 +149,11 @@ private fun StatisticsApp(model: AnalysisViewModel) {
             model.navigate(if (state.page == AppPage.RESULTS) AppPage.ANALYSIS else AppPage.DATA)
         }
     }
+    ExcelImportDialog(model)
     Scaffold(
         modifier = Modifier.fillMaxSize().imePadding(),
         topBar = {
-            Column(Modifier.windowInsetsPadding(WindowInsets.statusBars)) {
+            Column(Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))) {
                 Row(
                     Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -156,7 +161,6 @@ private fun StatisticsApp(model: AnalysisViewModel) {
                 ) {
                     Text("pocketomv", Modifier.weight(1f).padding(end = 12.dp),
                         style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Pill("Offline")
                 }
                 if (state.busy != null) {
                     LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -215,7 +219,8 @@ private fun StatisticsApp(model: AnalysisViewModel) {
             key(state.page) {
                 when (state.page) {
                     AppPage.DATA -> DataScreen(state, model,
-                        onImport = { openData.launch(arrayOf("text/*", "application/csv", "application/octet-stream")) },
+                        onImport = { openData.launch(arrayOf(EXCEL_MIME, "text/*", "application/csv",
+                            "application/vnd.ms-excel", "application/octet-stream")) },
                         onSave = {
                             scope.launch {
                                 if (model.prepareExport(ExportKind.DATA)) saveData.launch("pocketomv-data.csv")
@@ -229,11 +234,18 @@ private fun StatisticsApp(model: AnalysisViewModel) {
                     AppPage.RESULTS -> ResultsScreen(state, model,
                         onCopy = {
                             state.result?.let { result ->
-                                val clipboard = context.getSystemService(ClipboardManager::class.java)
-                                clipboard.setPrimaryClip(ClipData.newPlainText(
-                                    result.method.title, result.asReport(state.source, state.fictional),
-                                ))
-                                scope.launch { snackbar.showSnackbar("Report copied") }
+                                val report = result.asReport(state.source, state.fictional, state.preparationNotes)
+                                if (report.length > 100_000) {
+                                    scope.launch { snackbar.showSnackbar("This report is too large to copy. Save it as a text file instead.") }
+                                } else {
+                                    try {
+                                        val clipboard = context.getSystemService(ClipboardManager::class.java)
+                                        clipboard.setPrimaryClip(ClipData.newPlainText(result.method.title, report))
+                                        scope.launch { snackbar.showSnackbar("Report copied") }
+                                    } catch (_: RuntimeException) {
+                                        scope.launch { snackbar.showSnackbar("The report could not be copied. Save it as a text file instead.") }
+                                    }
+                                }
                             }
                         },
                         onSave = {
@@ -241,6 +253,8 @@ private fun StatisticsApp(model: AnalysisViewModel) {
                                 if (model.prepareExport(ExportKind.REPORT)) saveReport.launch("pocketomv-results.txt")
                             }
                         },
+                        onSaveHtml = { scope.launch { if (model.prepareExport(ExportKind.HTML)) saveHtml.launch("pocketomv-results.html") } },
+                        onSavePdf = { scope.launch { if (model.prepareExport(ExportKind.PDF)) savePdf.launch("pocketomv-results.pdf") } },
                     )
                 }
             }
@@ -261,16 +275,24 @@ private fun DataScreen(
         contentPadding = PaddingValues(20.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
-        item { PageHeading("YOUR DATA", "Start with a table", "Enter a few rows or open a CSV / TSV file from your phone.") }
+        item { PageHeading("YOUR DATA", "Start with a table", "Enter a few rows or open an Excel, CSV or TSV file from your phone.") }
         item {
             Panel {
-                Button(onClick = onImport, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text("Open CSV / TSV") }
+                Button(onClick = onImport, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text("Open Excel / CSV / TSV") }
                 OutlinedButton(onClick = model::loadExample, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
                     Text("Try fictional data")
                 }
+                if (state.data == null && state.draft.isBlank()) OutlinedButton(onClick = model::newTable, enabled = enabled,
+                    modifier = Modifier.fillMaxWidth()) { Text("New empty table") }
+                if (state.data != null) ChoiceField("Data editor", state.dataEditor,
+                    listOf(DataEditorView.TEXT to "Text / paste", DataEditorView.CELLS to "Cells"), enabled, model::selectDataEditor)
             }
         }
-        item {
+        if (state.dataEditor == DataEditorView.CELLS && state.data != null) item {
+            CellDataEditor(model)
+            OutlinedButton(onClick = onSave, enabled = enabled && !state.hasUnappliedChanges,
+                modifier = Modifier.fillMaxWidth()) { Text("Save data as CSV") }
+        } else item {
             Panel {
                 Text("Enter or paste data", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Text("Separate columns with commas, tabs, or semicolons. Put one observation on each row.",
@@ -298,7 +320,7 @@ private fun DataScreen(
         }
         state.data?.let { data ->
             item { DatasetSummary(state) }
-            item {
+            if (state.dataEditor == DataEditorView.TEXT) item {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Preview · first ${minOf(8, data.rows.size)} of ${data.rows.size} rows",
                         style = MaterialTheme.typography.titleSmall)
@@ -324,19 +346,19 @@ private fun AnalysisScreen(state: AnalysisScreenState, model: AnalysisViewModel,
         contentPadding = PaddingValues(20.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
-        item { PageHeading("CHOOSE A METHOD", "Set up your analysis", "Select the test and the columns it should use.") }
+        item { PageHeading("CHOOSE A METHOD", "Set up your analysis", "Select an analysis and the columns it should use.") }
         item {
             Panel {
                 ChoiceField("Analysis", request.method, AnalysisMethod.entries.map { it to it.title }, enabled, model::selectMethod)
                 Text(request.method.purpose, style = MaterialTheme.typography.bodyMedium)
                 TextButton(onClick = model::loadExample, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
-                    Text("Load a fictional example for this test")
+                    Text("Load a fictional example")
                 }
             }
         }
         val data = state.data
         if (data == null) {
-            item { EmptyPanel("Add a dataset", "Type data or open a CSV / TSV to choose its columns.", "Go to Data") {
+            item { EmptyPanel("Add a dataset", "Type data or open Excel / CSV / TSV to choose its columns.", "Go to Data") {
                 model.navigate(AppPage.DATA)
             } }
         } else {
@@ -344,13 +366,21 @@ private fun AnalysisScreen(state: AnalysisScreenState, model: AnalysisViewModel,
             item {
                 Panel {
                     val columns = data.columns.mapIndexed { index, name -> index to name }
-                    ChoiceField(request.method.firstLabel, request.first, columns, enabled) {
-                        model.configure(request.copy(first = it))
+                    if (!request.method.usesItemSelection) ChoiceField(request.method.firstLabel, request.first, columns, enabled) {
+                        model.configure(if (request.method == AnalysisMethod.DESCRIPTIVES) request.copy(
+                            first = it, weight = request.weight.takeUnless { weight -> weight == it },
+                            descriptiveNumeric = it in data.numericColumns(),
+                            showBoxplot = it in data.numericColumns() && request.showBoxplot,
+                            showQQPlot = it in data.numericColumns() && request.showQQPlot,
+                        ) else request.copy(first = it, predictors = request.predictors.filterNot { predictor -> predictor == it }))
                     }
                     request.method.secondLabel?.let { label ->
                         ChoiceField(label, request.second, columns, enabled) {
                             model.configure(request.copy(second = it))
                         }
+                    }
+                    if (request.method == AnalysisMethod.DESCRIPTIVES) {
+                        DescriptiveOptions(data, request, enabled, model::configure)
                     }
                     if (request.method.usesCounts) {
                         val choices: List<Pair<Int?, String>> = listOf(null to "One row = one observation") + columns
@@ -391,6 +421,9 @@ private fun AnalysisScreen(state: AnalysisScreenState, model: AnalysisViewModel,
                             model.configure(request.copy(equalVariance = it))
                         }
                     }
+                    AdvancedOptions(data, request, enabled, model::configure)
+                    MeanCheckOptions(request, enabled, model::configure)
+                    PlotOptions(request, enabled, model::configure)
                     if (request.method == AnalysisMethod.CHI_GOODNESS) {
                         val order = remember(data, request.first, request.count) {
                             runCatching { Statistics.goodnessCategoryOrder(data, request) }.getOrDefault(emptyList())
@@ -425,6 +458,8 @@ private fun ResultsScreen(
     model: AnalysisViewModel,
     onCopy: () -> Unit,
     onSave: () -> Unit,
+    onSaveHtml: () -> Unit,
+    onSavePdf: () -> Unit,
 ) {
     val result = state.result
     LazyColumn(
@@ -440,7 +475,9 @@ private fun ResultsScreen(
         } else {
             item { PageHeading("YOUR RESULTS", result.method.title, result.calculation) }
             item { DatasetSummary(state) }
-            item {
+            graphItems(result, state.request.qqSample, state.busy == null, model::selectQQSample)
+            result.descriptives?.let { descriptiveItems(it) }
+            if (result.test != null) item {
                 Panel {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -480,6 +517,11 @@ private fun ResultsScreen(
                 item { TitledTable("Expected counts", listOf("Category") + table.columnLabels,
                     table.rowLabels.indices.map { listOf(table.rowLabels[it]) + table.expected[it].map(::formatStatistic) }) }
             }
+            meanCheckItems(result)
+            result.tables.forEach { table -> item {
+                TitledTable(table.title, table.headers, table.rows)
+                table.notes.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+            } }
             if (result.notes.isNotEmpty()) {
                 item {
                     Panel {
@@ -496,6 +538,8 @@ private fun ResultsScreen(
                     OutlinedButton(onClick = onSave, enabled = state.busy == null, modifier = Modifier.fillMaxWidth()) {
                         Text("Save report as text")
                     }
+                    OutlinedButton(onClick = onSaveHtml, enabled = state.busy == null, modifier = Modifier.fillMaxWidth()) { Text("Save report as HTML") }
+                    OutlinedButton(onClick = onSavePdf, enabled = state.busy == null, modifier = Modifier.fillMaxWidth()) { Text("Save report as PDF") }
                     TextButton(onClick = { model.navigate(AppPage.ANALYSIS) }, enabled = state.busy == null,
                         modifier = Modifier.fillMaxWidth()) { Text("Edit analysis") }
                 }
@@ -525,6 +569,8 @@ private fun DatasetSummary(state: AnalysisScreenState) {
         Text(state.source, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
         if (state.fictional) Text("Fictional practice data", style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.primary)
+        if (state.preparationNotes.isNotEmpty()) Text("Scoring history is available in Data and in reports.",
+            style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -562,7 +608,7 @@ private fun ErrorNotice(message: String) {
 }
 
 @Composable
-private fun CheckOption(label: String, checked: Boolean, enabled: Boolean, onChange: (Boolean) -> Unit) {
+internal fun CheckOption(label: String, checked: Boolean, enabled: Boolean, onChange: (Boolean) -> Unit) {
     Row(
         Modifier.fillMaxWidth().toggleable(checked, enabled = enabled, role = Role.Checkbox, onValueChange = onChange)
             .padding(vertical = 4.dp),
@@ -576,7 +622,7 @@ private fun CheckOption(label: String, checked: Boolean, enabled: Boolean, onCha
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun <T> ChoiceField(
+internal fun <T> ChoiceField(
     label: String,
     value: T,
     choices: List<Pair<T, String>>,
@@ -608,7 +654,7 @@ private fun <T> ChoiceField(
 }
 
 @Composable
-private fun TitledTable(title: String, headers: List<String>, rows: List<List<String>>) {
+internal fun TitledTable(title: String, headers: List<String>, rows: List<List<String>>) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         if (headers.size > 2) Text("Swipe the table sideways to see every column.",

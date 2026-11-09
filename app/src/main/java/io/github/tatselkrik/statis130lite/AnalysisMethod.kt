@@ -9,6 +9,7 @@ enum class AnalysisMethod(
     val secondLabel: String? = null,
     val directional: Boolean = false,
 ) {
+    DESCRIPTIVES("Descriptives", "Summarize a variable with statistics, frequencies and a histogram.", "Variable"),
     ONE_SAMPLE_T("One-sample t test", "Compare a sample mean with a specified value.", "Sample values", directional = true),
     INDEPENDENT_T("Independent-samples t test", "Compare means from two independent groups.", "Outcome", "Group", true),
     PAIRED_T("Paired-samples t test", "Compare means from two measurements on the same cases.", "First measurement", "Second measurement", true),
@@ -21,11 +22,21 @@ enum class AnalysisMethod(
     PEARSON("Pearson correlation", "Measure the strength and direction of a linear association.", "First variable", "Second variable", true),
     SPEARMAN("Spearman correlation", "Measure a monotonic association using average ranks for ties.", "First variable", "Second variable", true),
     REGRESSION("Simple linear regression", "Predict an outcome from one numeric variable.", "Predictor", "Outcome"),
+    RELIABILITY("Reliability analysis", "Estimate internal consistency and inspect item diagnostics.", "Items"),
+    MULTIPLE_REGRESSION("Multiple linear regression", "Model an outcome using simultaneous numeric predictors.", "Outcome"),
+    REPEATED_ANOVA("Repeated-measures ANOVA", "Compare conditions of one within-subject factor; one column per condition.", "Conditions"),
     ;
 
     val usesCounts: Boolean get() = this == CHI_GOODNESS || this == CHI_INDEPENDENCE
     val usesGroups: Boolean get() = this in groupedMethods
     val usesVarianceChoice: Boolean get() = this == INDEPENDENT_T || this == ANOVA
+    val supportsNormalityCheck: Boolean get() = this in setOf(ONE_SAMPLE_T, INDEPENDENT_T, PAIRED_T, ANOVA, MULTIPLE_REGRESSION)
+    val supportsVarianceCheck: Boolean get() = this == INDEPENDENT_T || this == ANOVA
+    val supportsBoxplot: Boolean get() = this == DESCRIPTIVES || this == REPEATED_ANOVA || (supportsNormalityCheck && this != MULTIPLE_REGRESSION) ||
+        this in setOf(MANN_WHITNEY, WILCOXON, KRUSKAL_WALLIS)
+    val supportsQQPlot: Boolean get() = this == DESCRIPTIVES || supportsNormalityCheck
+    val supportsScatterplot: Boolean get() = this in setOf(PEARSON, SPEARMAN, REGRESSION, MULTIPLE_REGRESSION)
+    val usesItemSelection: Boolean get() = this == RELIABILITY || this == REPEATED_ANOVA
 
     companion object {
         private val groupedMethods = setOf(INDEPENDENT_T, ANOVA, MANN_WHITNEY, KRUSKAL_WALLIS)
@@ -38,6 +49,10 @@ enum class Tail(val label: String, val hypothesis: AlternativeHypothesis) {
     LESS("Less than (<)", AlternativeHypothesis.LESS_THAN),
 }
 
+enum class RepeatedCorrection(val label: String) {
+    GREENHOUSE_GEISSER("Greenhouse–Geisser"), HUYNH_FELDT("Huynh–Feldt"), NONE("Uncorrected"),
+}
+
 data class AnalysisRequest(
     val method: AnalysisMethod = AnalysisMethod.ONE_SAMPLE_T,
     val first: Int = 0,
@@ -47,6 +62,23 @@ data class AnalysisRequest(
     val tail: Tail = Tail.TWO_SIDED,
     val equalVariance: Boolean = false,
     val expectedWeights: String = "",
+    val descriptiveNumeric: Boolean = true,
+    val weight: Int? = null,
+    val population: Boolean = false,
+    val percentiles: String = "25,50,75",
+    val histogramBins: String = "",
+    val checkNormality: Boolean = false,
+    val checkVariances: Boolean = false,
+    val pairwiseComparisons: Boolean = false,
+    val showBoxplot: Boolean = false,
+    val showQQPlot: Boolean = false,
+    val showScatterplot: Boolean = false,
+    val qqSample: String = "",
+    val items: List<Int> = emptyList(),
+    val predictors: List<Int> = emptyList(),
+    val showItemCorrelations: Boolean = false,
+    val repeatedCorrection: RepeatedCorrection = RepeatedCorrection.GREENHOUSE_GEISSER,
+    val repeatedComparisons: Boolean = false,
 ) {
     companion object {
         fun forData(method: AnalysisMethod, data: CourseData?): AnalysisRequest {
@@ -82,6 +114,9 @@ data class AnalysisRequest(
                     (method.secondLabel == null || likelyCount != second)
                 ) likelyCount else null,
                 equalVariance = method == AnalysisMethod.ANOVA,
+                descriptiveNumeric = first in numeric,
+                items = if (method.usesItemSelection) numeric.take(if (method == AnalysisMethod.RELIABILITY) 60 else 12) else emptyList(),
+                predictors = if (method == AnalysisMethod.MULTIPLE_REGRESSION) numeric.filter { it != first }.take(12) else emptyList(),
             )
         }
 

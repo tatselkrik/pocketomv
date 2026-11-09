@@ -18,18 +18,48 @@ fun formatProbability(value: Double): String =
 fun Estimate.confidenceInterval(): String =
     if (lower95 != null && upper95 != null) "[${formatStatistic(lower95)}, ${formatStatistic(upper95)}]" else "—"
 
-fun AnalysisResult.asReport(source: String, fictional: Boolean): String = buildString {
+fun AnalysisResult.asReport(source: String, fictional: Boolean, preparationNotes: List<String> = emptyList()): String = buildString {
     appendLine("pocketomv")
     appendLine(method.title)
     appendLine(calculation)
     appendLine(source)
     if (fictional) appendLine("Fictional practice data")
+    if (preparationNotes.isNotEmpty()) {
+        appendLine()
+        appendLine("Data preparation (saved values)")
+        preparationNotes.forEach { appendLine(reportCell(it)) }
+    }
     appendLine()
-    appendLine("$statisticLabel = ${formatStatistic(statistic)}")
-    appendLine("p ${if (pValue < 0.001) formatProbability(pValue) else "= ${formatProbability(pValue)}"}")
-    if (degreesOfFreedom.isNotEmpty()) appendLine("Degrees of freedom = ${degreesOfFreedom.joinToString { formatStatistic(it) }}")
-    appendLine("Included cases = $includedCases")
-    appendLine("Excluded rows = $excludedRows")
+    test?.let {
+        appendLine("${it.label} = ${formatStatistic(it.statistic)}")
+        appendLine("p ${if (it.pValue < 0.001) formatProbability(it.pValue) else "= ${formatProbability(it.pValue)}"}")
+        if (degreesOfFreedom.isNotEmpty()) appendLine("Degrees of freedom = ${degreesOfFreedom.joinToString { formatStatistic(it) }}")
+        appendLine("Included cases = $includedCases")
+        appendLine("Excluded rows = $excludedRows")
+    }
+    descriptives?.let { summary ->
+        appendLine("Variable: ${summary.variable}")
+        appendLine("Measure\tValue")
+        summary.summaryRows().forEach { row -> appendLine(row.joinToString("\t") { reportCell(it) }) }
+        summary.numeric?.let { numeric ->
+            if (numeric.percentiles.isNotEmpty()) {
+                appendLine()
+                appendLine("Percentiles (linear interpolation, R type 7)")
+                appendLine("Percentile\tValue")
+                numeric.percentiles.forEach { appendLine("${formatStatistic(it.percent)}\t${formatStatistic(it.value)}") }
+            }
+            appendLine()
+            appendLine("Histogram intervals")
+            appendLine("Interval\tCount")
+            numeric.histogram.forEachIndexed { index, bin ->
+                appendLine("${bin.intervalLabel(index == numeric.histogram.lastIndex)}\t${bin.count}")
+            }
+        }
+        appendLine()
+        appendLine("Value frequencies (non-missing observations)")
+        appendLine("Value\tCount\tPercent")
+        summary.frequencies.forEach { appendLine("${reportCell(it.value)}\t${it.count}\t${formatStatistic(it.percent)}") }
+    }
     if (estimates.isNotEmpty()) {
         appendLine()
         appendLine("Estimates")
@@ -62,9 +92,92 @@ fun AnalysisResult.asReport(source: String, fictional: Boolean): String = buildS
             appendLine((listOf(table.rowLabels[row]) + table.expected[row].map(::formatStatistic)).joinToString("\t"))
         }
     }
+    if (assumptionChecks.isNotEmpty()) {
+        appendLine()
+        appendLine("Assumption checks")
+        appendLine("Check\tSample\tN\tStatistic\tdf\tp\tNote")
+        assumptionChecks.forEach { check ->
+            appendLine(listOf(check.name, check.sample, check.size.toString(),
+                check.test?.let { "${it.label} = ${formatStatistic(it.statistic)}" } ?: "Unavailable",
+                check.degreesOfFreedom.joinToString { formatStatistic(it) },
+                check.test?.pValue?.let(::formatProbability) ?: "—", check.note ?: "",
+            ).joinToString("\t") { reportCell(it) })
+        }
+    }
+    followUp?.let {
+        appendLine()
+        appendLine("Pairwise comparisons · ${it.method}")
+        if (it.unavailable != null) appendLine(it.unavailable) else {
+            appendLine(pairwiseHeaders.joinToString("\t"))
+            it.comparisons.forEach { row -> appendLine(row.displayRow().joinToString("\t") { value -> reportCell(value) }) }
+        }
+        appendLine(it.note)
+    }
+    plots?.let { plots ->
+        appendLine()
+        appendLine("Graphs (figures are shown in the app; this text report includes numerical summaries)")
+        if (plots.boxes.isNotEmpty()) {
+            appendLine("Boxplots: R type 7 quartiles; whiskers to the last observations within 1.5 IQR. Outliers remain in the analysis.")
+            appendLine(boxplotHeaders.joinToString("\t"))
+            plots.boxes.forEach { box -> appendLine(box.displayRow().joinToString("\t") { reportCell(it) }) }
+        }
+        if (plots.qq.isNotEmpty()) {
+            appendLine("Normal Q–Q: R ppoints positions; reference line through R type 7 Q1 and Q3. A graph alone does not establish normality.")
+            appendLine("Sample\tN\tQ1\tQ3\tStatus")
+            plots.qq.forEach { plot -> appendLine(listOf(plot.label, plot.size.toString(), formatStatistic(plot.q1),
+                formatStatistic(plot.q3), plot.unavailable ?: if (plot.points.first().y == plot.points.last().y)
+                    "Constant values; normality cannot be assessed" else "Available in app")
+                .joinToString("\t") { reportCell(it) }) }
+        }
+        plots.scatter?.let { scatter ->
+            appendLine("Scatterplot: X = ${reportCell(scatter.xLabel)}; Y = ${reportCell(scatter.yLabel)}; ${scatter.points.size} complete pairs, original values.")
+            if (scatter.fittedLine != null) appendLine("Fitted least-squares regression line shown in app.")
+        }
+    }
+    tables.forEach { table ->
+        appendLine()
+        appendLine(table.title)
+        appendLine(table.headers.joinToString("\t") { reportCell(it) })
+        table.rows.forEach { row -> appendLine(row.joinToString("\t") { reportCell(it) }) }
+        table.notes.forEach { appendLine(it) }
+    }
+    if (method == AnalysisMethod.RELIABILITY) {
+        appendLine("Complete participants = $includedCases")
+        appendLine("Excluded rows = $excludedRows")
+    }
     if (notes.isNotEmpty()) {
         appendLine()
         appendLine("Method notes")
         notes.forEach { appendLine(it) }
     }
 }
+
+internal fun DescriptiveSummary.summaryRows(modeLimit: Int = Int.MAX_VALUE): List<List<String>> = buildList {
+    add(listOf("Valid N", validCount.toString()))
+    add(listOf("Missing", missingCount.toString()))
+    numeric?.let { values ->
+        add(listOf("Mean", formatStatistic(values.mean)))
+        values.weightedMean?.let { add(listOf("Weighted mean", formatStatistic(it.value))) }
+        add(listOf("Median", formatStatistic(values.median)))
+    }
+    val mode = if (modes.isEmpty()) {
+        if (modeCount == 1) "None (each value occurs once)" else "None (all values have equal frequency)"
+    } else modes.take(modeLimit).joinToString(", ") +
+        if (modes.size > modeLimit) " (${modes.size - modeLimit} more; see report)" else ""
+    add(listOf("Mode", mode))
+    if (modes.isNotEmpty()) add(listOf("Mode frequency", modeCount.toString()))
+    numeric?.let { values ->
+        val basis = if (values.population) "population" else "sample"
+        add(listOf("Variance ($basis)", values.variance?.let(::formatStatistic) ?: "—"))
+        add(listOf("Standard deviation ($basis)", values.standardDeviation?.let(::formatStatistic) ?: "—"))
+        add(listOf("Minimum", descriptiveValue(values.minimum)))
+        add(listOf("Maximum", descriptiveValue(values.maximum)))
+    }
+}
+
+internal fun HistogramBin.intervalLabel(last: Boolean): String =
+    if (lower == upper) descriptiveValue(lower)
+    else "[${descriptiveValue(lower)}, ${descriptiveValue(upper)}${if (last) "]" else ")"}"
+
+private fun reportCell(value: String): String =
+    value.replace("\\", "\\\\").replace("\t", "\\t").replace("\r", "\\r").replace("\n", "\\n")

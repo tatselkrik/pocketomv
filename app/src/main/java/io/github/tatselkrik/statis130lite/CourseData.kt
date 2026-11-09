@@ -7,7 +7,7 @@ import java.nio.charset.StandardCharsets
 data class CourseData(val columns: List<String>, val rows: List<List<String>>) {
     fun asCsv(): String = (listOf(columns) + rows).joinToString("\r\n") { row ->
         row.joinToString(",") { value ->
-            if (value.any { it in ",\"\r\n" }) "\"${value.replace("\"", "\"\"")}\"" else value
+            if (value.any { it in ",;\t\"\r\n" }) "\"${value.replace("\"", "\"\"")}\"" else value
         }
     }
 
@@ -50,9 +50,13 @@ fun parseDelimited(text: String, firstRowHasNames: Boolean = true): CourseData {
     val input = text.removePrefix("\uFEFF")
     val delimiter = detectDelimiter(input)
     val records = splitRecords(input, delimiter)
-    require(records.size > if (firstRowHasNames) 1 else 0) { "Add at least one row of data." }
+    return tableFromRecords(records, firstRowHasNames)
+}
 
+internal fun tableFromRecords(records: List<List<String>>, firstRowHasNames: Boolean): CourseData {
+    require(records.size > if (firstRowHasNames) 1 else 0) { "Add at least one row of data." }
     val width = records.maxOf { it.size }
+    require(width in 1..MAX_COLUMNS) { "Use at most $MAX_COLUMNS columns." }
     require(records.size * width <= MAX_CELLS) { "Use a table with at most 250,000 cells." }
     val names = if (firstRowHasNames) records.first() else emptyList()
     val used = mutableSetOf<String>()

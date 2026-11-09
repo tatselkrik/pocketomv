@@ -6,7 +6,9 @@ import java.nio.charset.CodingErrorAction
 import org.json.JSONArray
 import org.json.JSONObject
 
-enum class ExportKind { DATA, REPORT }
+enum class ExportKind { DATA, REPORT, HTML, PDF;
+    val requiresResult: Boolean get() = this != DATA
+}
 
 internal data class SavedSession(
     val screen: AnalysisScreenState,
@@ -50,6 +52,8 @@ internal object SessionCodec {
             .put("fictional", state.fictional)
             .put("draftFictional", state.draftFictional)
             .put("hadResult", session.hadResult)
+            .put("dataEditor", state.dataEditor.name)
+            .put("preparationNotes", JSONArray(state.preparationNotes))
             .put("request", JSONObject()
                 .put("method", request.method.name)
                 .put("first", request.first)
@@ -59,7 +63,25 @@ internal object SessionCodec {
                 .put("tail", request.tail.name)
                 .put("equalVariance", request.equalVariance)
                 .put("expectedWeights", request.expectedWeights))
-            .put("pendingExport", session.pendingExport?.name ?: JSONObject.NULL)
+        json.getJSONObject("request")
+            .put("descriptiveNumeric", request.descriptiveNumeric)
+            .put("weight", request.weight ?: JSONObject.NULL)
+            .put("population", request.population)
+            .put("percentiles", request.percentiles)
+            .put("histogramBins", request.histogramBins)
+            .put("checkNormality", request.checkNormality)
+            .put("checkVariances", request.checkVariances)
+            .put("pairwiseComparisons", request.pairwiseComparisons)
+            .put("showBoxplot", request.showBoxplot)
+            .put("showQQPlot", request.showQQPlot)
+            .put("showScatterplot", request.showScatterplot)
+            .put("qqSample", request.qqSample)
+            .put("items", JSONArray(request.items))
+            .put("predictors", JSONArray(request.predictors))
+            .put("showItemCorrelations", request.showItemCorrelations)
+            .put("repeatedCorrection", request.repeatedCorrection.name)
+            .put("repeatedComparisons", request.repeatedComparisons)
+        json.put("pendingExport", session.pendingExport?.name ?: JSONObject.NULL)
         state.data?.let { data ->
             val rows = JSONArray()
             data.rows.forEach { rows.put(JSONArray(it)) }
@@ -104,6 +126,11 @@ internal object SessionCodec {
             source = json.text("source"),
             fictional = json.flag("fictional"),
             draftFictional = json.flag("draftFictional"),
+            dataEditor = if (json.has("dataEditor")) DataEditorView.valueOf(json.text("dataEditor")) else DataEditorView.TEXT,
+            preparationNotes = if (json.has("preparationNotes")) json.getJSONArray("preparationNotes").let { notes ->
+                require(notes.length() <= 60) { "The saved preparation notes are too large." }
+                List(notes.length()) { notes.stringAt(it) }
+            } else emptyList(),
             request = AnalysisRequest(
                 method = AnalysisMethod.valueOf(request.text("method")),
                 first = request.integer("first"),
@@ -113,6 +140,23 @@ internal object SessionCodec {
                 tail = Tail.valueOf(request.text("tail")),
                 equalVariance = request.flag("equalVariance"),
                 expectedWeights = request.text("expectedWeights"),
+                descriptiveNumeric = if (request.has("descriptiveNumeric")) request.flag("descriptiveNumeric") else true,
+                weight = if (request.isNull("weight")) null else request.integer("weight"),
+                population = if (request.has("population")) request.flag("population") else false,
+                percentiles = if (request.has("percentiles")) request.text("percentiles") else "25,50,75",
+                histogramBins = if (request.has("histogramBins")) request.text("histogramBins") else "",
+                checkNormality = if (request.has("checkNormality")) request.flag("checkNormality") else false,
+                checkVariances = if (request.has("checkVariances")) request.flag("checkVariances") else false,
+                pairwiseComparisons = if (request.has("pairwiseComparisons")) request.flag("pairwiseComparisons") else false,
+                showBoxplot = if (request.has("showBoxplot")) request.flag("showBoxplot") else false,
+                showQQPlot = if (request.has("showQQPlot")) request.flag("showQQPlot") else false,
+                showScatterplot = if (request.has("showScatterplot")) request.flag("showScatterplot") else false,
+                qqSample = if (request.has("qqSample")) request.text("qqSample") else "",
+                items = request.indices("items"),
+                predictors = request.indices("predictors"),
+                showItemCorrelations = if (request.has("showItemCorrelations")) request.flag("showItemCorrelations") else false,
+                repeatedCorrection = if (request.has("repeatedCorrection")) RepeatedCorrection.valueOf(request.text("repeatedCorrection")) else RepeatedCorrection.GREENHOUSE_GEISSER,
+                repeatedComparisons = if (request.has("repeatedComparisons")) request.flag("repeatedComparisons") else false,
             ),
         )
         return SavedSession(
@@ -124,10 +168,16 @@ internal object SessionCodec {
     private fun validate(session: SavedSession) {
         val state = session.screen
         val request = state.request
-        val text = listOf(state.draft, state.appliedDraft, state.source, request.reference, request.expectedWeights)
+        val text = listOf(state.draft, state.appliedDraft, state.source, request.reference,
+            request.expectedWeights, request.percentiles, request.histogramBins, request.qqSample) + state.preparationNotes
         require(text.all { it.length <= MAX_TEXT }) { "A saved text field is too large." }
+        require(state.preparationNotes.size <= 60) { "The saved preparation notes are too large." }
+        require(request.items.size <= 60 && request.predictors.size <= 12 && listOf(request.items, request.predictors).all {
+            it.distinct().size == it.size && it.all { index -> index in 0..59 }
+        }) { "The saved column list is invalid." }
         require(request.first in 0..59 && request.second in 0..59 &&
-            (request.count == null || request.count in 0..59)
+            (request.count == null || request.count in 0..59) &&
+            (request.weight == null || request.weight in 0..59)
         ) { "The saved column selection is invalid." }
         state.data?.let { data ->
             require(data.columns.size in 1..60 && data.rows.size in 1..20_000 &&
@@ -141,12 +191,19 @@ internal object SessionCodec {
         require(!session.hadResult || (state.data != null && !state.hasUnappliedChanges)) {
             "The saved result has no matching applied table."
         }
-        require(session.pendingExport != ExportKind.REPORT || session.hadResult) { "The saved report is unavailable." }
+        require(session.pendingExport?.requiresResult != true || session.hadResult) { "The saved report is unavailable." }
         require(session.pendingExport == null || state.data != null) { "The saved export has no table." }
     }
 
     private fun JSONObject.text(key: String): String =
         (get(key) as? String) ?: throw IllegalArgumentException("Invalid saved text field.")
+
+    private fun JSONObject.indices(key: String): List<Int> {
+        if (!has(key)) return emptyList()
+        val array = getJSONArray(key)
+        require(array.length() <= 60) { "The saved column list is too large." }
+        return List(array.length()) { (array.get(it) as? Int) ?: throw IllegalArgumentException("Invalid saved column index.") }
+    }
 
     private fun JSONObject.integer(key: String): Int =
         (get(key) as? Int) ?: throw IllegalArgumentException("Invalid saved integer field.")
