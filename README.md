@@ -1,7 +1,7 @@
 <h1 align="center">pocketomv 📊</h1>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.4.0-006b5e" alt="Version 0.4.0">
+  <img src="https://img.shields.io/badge/version-0.4.1-006b5e" alt="Version 0.4.1">
   <img src="https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&amp;logoColor=white" alt="Android 8.0 or newer">
   <img src="https://img.shields.io/badge/Kotlin-Jetpack%20Compose-7F52FF?logo=kotlin&amp;logoColor=white" alt="Kotlin and Jetpack Compose">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-172d28" alt="MIT license"></a>
@@ -68,6 +68,8 @@ Current work saves automatically in private device storage. The app restores app
 | Factor analysis | MINRES/principal axis EFA; Oblimin/Varimax/Promax; fixed, eigenvalue and parallel retention; KMO/MSA, Bartlett and scree plots |
 
 Mann–Whitney and Wilcoxon use exact probabilities for eligible small samples and corrected approximations otherwise. Zero paired differences are removed before Wilcoxon ranks are assigned. Spearman uses exact permutation probabilities for small untied samples, AS 89 for larger untied samples, and a t approximation for ties or more than 1,290 pairs. Method notes identify the calculation used for each result.
+
+Mann–Whitney shows **U = min(U₁, U₂)** as the main statistic, matching jamovi. The estimates retain both group-ordered U values. Directional alternatives still compare the displayed first group with the second; choosing the smaller headline U does not change the p-value or group direction. See [Mann–Whitney conventions](docs/statistical-methods.md#mannwhitney-u).
 
 ### Assumption checks and ANOVA follow-ups
 
@@ -261,7 +263,7 @@ Imports and exports use Android's document picker. Exported files are written to
 
 Install the pocketomv APK on a phone running Android 8.0 or newer. Open the APK in your file manager and allow installation from that source when Android asks.
 
-To update, install the newer APK over the existing app to retain saved work.
+To update and retain saved work, install a newer APK signed with the same key over the existing app.
 
 ## License and acknowledgments
 

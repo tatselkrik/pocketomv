@@ -10,6 +10,12 @@ Independent-samples Cohen's d uses the displayed first group minus second group.
 
 One-sample, independent and paired t tests use 95% confidence intervals consistent with the selected hypothesis. Two-sided alternatives use the .975 t quantile. A greater-than alternative uses the .95 quantile for a finite lower bound and an unbounded upper end; a less-than alternative uses an unbounded lower end and a finite upper bound. The one-sample results show both the population mean interval and the mean-minus-reference interval. Regression coefficient intervals and pairwise comparisons keep their separately stated two-sided definitions.
 
+## Mann–Whitney U
+
+The main statistic is `U = min(U₁, U₂)`, matching jamovi's reporting convention. The estimates retain U₁ for the displayed first group and U₂ for the second, with `U₁ + U₂ = n₁ × n₂`. Swapping the groups exchanges U₁ and U₂ while preserving the smaller U and the two-sided p-value.
+
+Directional alternatives still test the first group relative to the second. Their p-values use the original group order, independently of which U is smaller. The headline convention applies to the Results screen and text, HTML and PDF reports; method notes identify both groups and the selected alternative.
+
 ## Normality
 
 Shapiro–Wilk tests are available for one-sample, independent-samples and paired-samples t tests, one-way ANOVA and multiple-regression residuals. The one-sample check uses the selected sample. New independent-samples requests use pooled group-centered residuals. One-way ANOVA uses standardized model residuals, dividing each group-centered value by `sqrt(1 − 1/group N)`; the common residual-SD scale cancels in Shapiro–Wilk. These match the distinct jamovi module conventions. Singleton-group standardized residuals are undefined and omitted with a note, while the main ordinary ANOVA retains the observations; jamovi's one-way module can reject singleton groups entirely. Separate-group checks or both views are selectable, with each analysis retaining its own setting. Older saved sessions retain their previous separate-group settings. The paired check uses complete-pair differences. Regression checks fitted-model residuals. Normality selection does not change the main test or independently selected graphs.

@@ -332,12 +332,15 @@ object Statistics {
         val exact = first.size < 50 && second.size < 50 && !hasTies(pooled)
         val test = MannWhitneyUTest.withDefaults().with(request.tail.hypothesis)
             .with(if (exact) PValueMethod.EXACT else PValueMethod.ASYMPTOTIC).test(first, second)
+        val firstU = test.statistic
+        val secondU = first.size.toDouble() * second.size - firstU
         return AnalysisResult(
-            request.method, rankCalculation(exact), "U₁", test.statistic, test.pValue,
+            request.method, rankCalculation(exact), "U", min(firstU, secondU), test.pValue,
             pooled.size.toLong(), data.rows.size - pooled.size,
-            estimates = listOf(Estimate("U₂", first.size.toDouble() * second.size - test.statistic)),
+            estimates = listOf(Estimate("U₁", firstU), Estimate("U₂", secondU)),
             samples = groups.map { summary(it.label, it.values) },
             notes = listOf(
+                "U is the smaller of U₁ and U₂, as in jamovi. The selected alternative still follows the displayed group order.",
                 "U₁ refers to group ${groups[0].label}. U₂ refers to group ${groups[1].label}.",
                 tailNote(request.tail, "${groups[0].label} relative to ${groups[1].label}"),
                 "The rank test compares distributions. A median interpretation assumes similarly shaped distributions.",

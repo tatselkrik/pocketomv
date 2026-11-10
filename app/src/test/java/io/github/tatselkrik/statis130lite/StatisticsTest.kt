@@ -87,7 +87,8 @@ class StatisticsTest {
     fun mannWhitneyExactAndTiedCasesMatchReferences() {
         val request = AnalysisRequest(method = AnalysisMethod.MANN_WHITNEY, first = 1, second = 0)
         val exact = Statistics.run(grouped(listOf(listOf(1, 4, 7, 10), listOf(2, 3, 5, 6, 8))), request)
-        checkTest(exact, 11.0, 0.9047619047619049)
+        checkTest(exact, 9.0, 0.9047619047619049)
+        assertEquals(11.0, exact.estimates.single { it.label == "U₁" }.value, 0.0)
         assertTrue(exact.calculation.startsWith("Exact"))
         val tied = Statistics.run(grouped(listOf(listOf(1, 2, 2, 4, 6), listOf(2, 3, 3, 5))), request)
         checkTest(tied, 8.0, 0.7074180726307056)
