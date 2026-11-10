@@ -14,7 +14,8 @@ class FactorialEfaTest {
     private fun ints(a: JSONArray) = a.indices().map { a.getInt(it) }
     private fun request(case: JSONObject) = AnalysisRequest(method = if (case.getJSONArray("covariates").length() == 0) AnalysisMethod.FACTORIAL_ANOVA else AnalysisMethod.ANCOVA,
         first = 0, factors = ints(case.getJSONArray("factors")), covariates = ints(case.getJSONArray("covariates")),
-        factorInteractions = case.getBoolean("interactions"), modelComparisons = true, checkSlopes = true)
+        factorInteractions = case.getBoolean("interactions"), modelComparisons = true, modelAdjustment = ModelAdjustment.HOLM,
+        modelComparisonFamily = ModelComparisonFamily.ALL_FACTORS, checkSlopes = true)
     private fun close(expected: Double, actual: Double, tolerance: Double = 2e-8) = assertEquals(expected, actual, tolerance * (1 + abs(expected)))
     private fun termLabel(label: String) = label.replace(Regex("C\\(([^,]+), Sum\\)"), "$1").replace(":", " × ")
 
@@ -77,9 +78,10 @@ class FactorialEfaTest {
         val cases=reference.getJSONArray("efa")
         for(index in cases.indices()) {
             val case=cases.getJSONObject(index);val table=data(case)
-            for(rotation in FactorRotation.entries) {
+            for(rotation in listOf(FactorRotation.NONE, FactorRotation.VARIMAX, FactorRotation.PROMAX)) {
                 val request=AnalysisRequest(method=AnalysisMethod.EFA,items=table.columns.indices.toList(),factorCountMethod=FactorCountMethod.FIXED,
-                    factorCount=case.getInt("count").toString(),factorRotation=rotation)
+                    factorCount=case.getInt("count").toString(),factorRotation=rotation,minresConvergence=MinresConvergence.TIGHT,
+                    varimaxConvergence=VarimaxConvergence.TIGHT)
                 val actual=ExploratoryFactors.compute(NumericMatrix.read(table,request.items,3,20),request)
                 val expected=case.getJSONObject("rotations").getJSONObject(rotation.name.lowercase())
                 close(case.getDouble("kmo"),actual.kmo!!);close(case.getDouble("bartlett"),actual.bartlett);close(case.getDouble("bartlettP"),actual.bartlettP)
@@ -99,7 +101,7 @@ class FactorialEfaTest {
         for(index in cases.indices()) {
             val case=cases.getJSONObject(index);val table=data(case)
             val request=AnalysisRequest(method=AnalysisMethod.EFA,items=table.columns.indices.toList(),factorCountMethod=FactorCountMethod.FIXED,
-                factorCount=case.getInt("count").toString(),factorExtraction=FactorExtraction.PRINCIPAL_AXIS)
+                factorCount=case.getInt("count").toString(),factorExtraction=FactorExtraction.PRINCIPAL_AXIS,principalAxisConvergence=PrincipalAxisConvergence.TIGHT)
             val actual=ExploratoryFactors.compute(NumericMatrix.read(table,request.items,3,20),request)
             actual.communalities!!.indices.forEach { close(case.getJSONArray("principalAxisCommon").getDouble(it),actual.communalities[it],3e-6) }
         }

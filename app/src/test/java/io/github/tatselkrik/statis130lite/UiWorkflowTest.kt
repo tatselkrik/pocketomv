@@ -63,7 +63,7 @@ class UiWorkflowTest {
     @Test
     fun displayedGoodnessCategoryOrderMatchesTheResultsAfterMissingFrequencyExclusions() {
         val data = parseDelimited("Category,Count\nC,0\nA,3\nB,NA")
-        val request = AnalysisRequest.forData(AnalysisMethod.CHI_GOODNESS, data).copy(expectedWeights = "1,2")
+        val request = AnalysisRequest.forData(AnalysisMethod.CHI_GOODNESS, data).copy(expectedWeights = "1,2", countMissingPolicy = CountMissingPolicy.OMIT)
         val order = Statistics.goodnessCategoryOrder(data, request)
         assertEquals(listOf("A", "C"), order)
         assertEquals(order, Statistics.run(data, request).frequencies!!.rowLabels)

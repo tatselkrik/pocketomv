@@ -2,6 +2,7 @@ package io.github.tatselkrik.statis130lite
 
 import org.apache.commons.statistics.distribution.FDistribution
 import org.apache.commons.statistics.distribution.TDistribution
+import org.apache.commons.statistics.inference.OneWayAnova
 import kotlin.math.abs
 import kotlin.math.sqrt
 
@@ -11,10 +12,23 @@ enum class SumsOfSquares(val label: String) {
     I("Type I · sequential, in displayed term order"),
 }
 
+enum class ModelHomogeneity(val label: String) {
+    MODEL_RESIDUALS("Absolute model residuals"), CELL_MEDIAN("Cell-median Levene"),
+}
+enum class ModelQQBasis(val label: String) {
+    STANDARDIZED("Standardized residuals · identity line"), RAW("Raw residuals · quartile line"),
+}
+enum class ModelComparisonFamily(val label: String) {
+    PER_FACTOR("Each factor separately"), ALL_FACTORS("All displayed factors"),
+}
+enum class ModelAdjustment(val label: String) {
+    TUKEY("Tukey"), HOLM("Holm"), BONFERRONI("Bonferroni"), NONE("Unadjusted"),
+}
+
 internal data class ModelTerm(val name: String, val factors: Set<Int>, val covariate: Int? = null,
     val columns: List<DoubleArray>)
 internal data class LinearFit(val beta: DoubleArray, val inverse: Array<DoubleArray>, val fitted: DoubleArray,
-    val residual: DoubleArray, val sse: Double, val df: Int)
+    val residual: DoubleArray, val sse: Double, val df: Int, val hat: DoubleArray)
 internal data class AnovaTermResult(val label: String, val ss: Double, val df: Int, val f: Double, val p: Double, val partialEta: Double)
 internal data class MarginalMean(val factor: String, val level: String, val mean: Double, val se: Double, val lower: Double,
     val upper: Double, val contrast: DoubleArray)
@@ -23,7 +37,8 @@ internal data class ModelComparison(val factor: String, val first: String, val s
 internal data class FactorialFit(val terms: List<AnovaTermResult>, val sse: Double, val df: Int, val f: Double,
     val p: Double, val r2: Double, val adjustedR2: Double, val means: List<MarginalMean>, val comparisons: List<ModelComparison>,
     val residuals: DoubleArray, val fitted: DoubleArray, val groups: List<Statistics.Group>, val n: Int, val excluded: Int,
-    val checks: List<AssumptionCheck>, val covariateMeans: List<Pair<String, Double>>, val modelFormula: String)
+    val checks: List<AssumptionCheck>, val covariateMeans: List<Pair<String, Double>>, val modelFormula: String,
+    val standardizedResiduals: List<Double?>)
 
 /** Full-rank fixed-effects least squares. Sum contrasts make Type III factor hypotheses explicit. */
 internal object FactorialAnova {
@@ -40,7 +55,8 @@ internal object FactorialAnova {
         val beta = qr.solve(y)
         val fitted = DoubleArray(y.size) { row -> MatrixMath.sum(DoubleArray(columns.size) { beta[it] * columns[it][row] }) }
         val residual = DoubleArray(y.size) { y[it] - fitted[it] }
-        return LinearFit(beta, qr.gramInverse(), fitted, residual, MatrixMath.dot(residual, residual), y.size - columns.size)
+        val hat = DoubleArray(y.size) { row -> MatrixMath.sum(DoubleArray(qr.q.size) { qr.q[it][row] * qr.q[it][row] }).coerceIn(0.0, 1.0) }
+        return LinearFit(beta, qr.gramInverse(), fitted, residual, MatrixMath.dot(residual, residual), y.size - columns.size, hat)
     }
 
     private fun probability(f: Double, numerator: Int, denominator: Int): Double =
@@ -62,6 +78,9 @@ internal object FactorialAnova {
     }
 
     fun compute(data: CourseData, request: AnalysisRequest): FactorialFit {
+        require(!request.modelComparisons || request.modelAdjustment != ModelAdjustment.TUKEY || request.modelComparisonFamily == ModelComparisonFamily.PER_FACTOR) {
+            "Tukey model comparisons use a separate family for each factor. Choose Each factor separately, or use another correction for a global family."
+        }
         val ancova = request.method == AnalysisMethod.ANCOVA
         val factors = request.factors
         val covariates = if (ancova) request.covariates else emptyList()
@@ -153,7 +172,22 @@ internal object FactorialAnova {
                 ModelComparison(a.factor, a.level, b.level, difference, se, statistic, p, p)
             }
         } } else emptyList()
-        val adjusted = adjust(rawPairs.map { it.p }, request.modelAdjustment)
+        val adjusted = MutableList(rawPairs.size) { 0.0 }
+        val families = if (request.modelComparisonFamily == ModelComparisonFamily.PER_FACTOR)
+            rawPairs.indices.groupBy { rawPairs[it].factor }.values else listOf(rawPairs.indices.toList())
+        for (indices in families) {
+            if (indices.isEmpty()) continue
+            val probabilities = if (request.modelAdjustment == ModelAdjustment.TUKEY) {
+                val factor = rawPairs[indices.first()].factor
+                val levelsInFactor = means.count { it.factor == factor }
+                if (full.df < 2 && levelsInFactor > 2) List(indices.size) { Double.NaN }
+                else {
+                    val distribution = StudentizedRange(levelsInFactor, full.df.toDouble())
+                    indices.map { distribution.survival(abs(rawPairs[it].t) * sqrt(2.0)) }
+                }
+            } else adjust(indices.map { rawPairs[it].p }, FriedmanAdjustment.valueOf(request.modelAdjustment.name))
+            indices.forEachIndexed { j, index -> adjusted[index] = probabilities[j] }
+        }
         val pairs = rawPairs.mapIndexed { i, pair -> pair.copy(adjustedP = adjusted[i]) }
         val residuals = DoubleArray(rows.size) { yScale * full.residual[it] }
         val predictions = DoubleArray(rows.size) { outcome.originalMean + yScale * full.fitted[it] }
@@ -161,12 +195,14 @@ internal object FactorialAnova {
             listOf(originalSS(full.sse)) + residuals.toList() + predictions.toList()).all(Double::isFinite)) {
             "Model estimates exceed the supported range. Rescale the outcome or covariates."
         }
-        val groups = codes.indices.groupBy { codes[it] }.map { (levels, indices) -> Statistics.Group(
+        val cells = codes.indices.groupBy { codes[it] }
+        val groups = cells.map { (levels, indices) -> Statistics.Group(
             factors.indices.joinToString(" · ") { "${data.columns[factors[it]]}=${labels[it][levels[it]]}" },
             DoubleArray(indices.size) { Statistics.number(data, rows[indices[it]], request.first) }) }
         val checks = buildList {
             if (request.checkNormality) add(MeanDiagnostics.normality("Model residuals", full.residual))
-            if (request.checkVariances) add(MeanDiagnostics.levene(groups))
+            if (request.checkVariances) add(if (request.modelHomogeneity == ModelHomogeneity.MODEL_RESIDUALS)
+                residualHomogeneity(full.residual, cells.values.toList()) else MeanDiagnostics.levene(groups))
             if (ancova && request.checkSlopes) {
                 val extra = cov.indices.flatMap { c -> factorTerms.map { term -> term.copy(
                     name = "${term.name} × ${data.columns[covariates[c]]}", covariate = c,
@@ -183,10 +219,15 @@ internal object FactorialAnova {
                 })
             }
         }
+        val residualSD = sqrt(full.sse / full.df)
+        val standardized = full.residual.indices.map { i ->
+            if (full.hat[i] >= 1.0 - 10 * Math.ulp(1.0)) null
+            else (full.residual[i] / (residualSD * sqrt(1 - full.hat[i]))).takeIf(Double::isFinite)
+        }
         return FactorialFit(results, originalSS(full.sse), full.df, f, probability(f, modelDf, full.df), r2,
             1 - (1 - r2) * (rows.size - 1) / full.df, means, pairs, residuals, predictions, groups, rows.size,
             data.rows.size - rows.size, checks, cov.indices.map { data.columns[covariates[it]] to cov[it].originalMean },
-            "${data.columns[request.first]} ~ ${terms.joinToString(" + ") { it.name }}")
+            "${data.columns[request.first]} ~ ${terms.joinToString(" + ") { it.name }}", standardized)
     }
 
     fun run(data: CourseData, request: AnalysisRequest): AnalysisResult {
@@ -205,20 +246,52 @@ internal object FactorialAnova {
             if (fit.comparisons.isNotEmpty()) add(AnalysisTable("Marginal mean comparisons · ${request.modelAdjustment.label}",
                 listOf("Factor", "First", "Second", "Difference", "SE", "t", "df", "Raw p", "Adjusted p"), fit.comparisons.map {
                     listOf(it.factor, it.first, it.second, formatStatistic(it.difference), formatStatistic(it.se), formatStatistic(it.t), fit.df.toString(), formatProbability(it.p), formatProbability(it.adjustedP))
-                }, listOf("First level minus second. Adjustment applies to one family containing every displayed comparison across all selected factors."), rowLabelColumns = 3))
+                }, listOf("First level minus second. " + if (request.modelComparisonFamily == ModelComparisonFamily.PER_FACTOR)
+                    "Adjustment applies separately to each factor's displayed comparisons, following jamovi."
+                    else "Adjustment applies to one family containing every displayed comparison across all selected factors.") +
+                    if (fit.comparisons.any { !it.adjustedP.isFinite() }) listOf("Multilevel Tukey p-values need at least two residual degrees of freedom under the reference convention. Raw t probabilities and the main model remain available.") else emptyList(), rowLabelColumns = 3))
         }
         return AnalysisResult(request.method, "Fixed-effects least squares · ${request.sumsOfSquares.label}", TestResult("F", fit.f, fit.p),
             fit.n.toLong(), fit.excluded, listOf(fit.terms.sumOf { it.df }.toDouble(), fit.df.toDouble()), tables = tables, assumptionChecks = fit.checks,
             plots = if (request.showQQPlot || request.showScatterplot) AnalysisPlots(
-                qq = if (request.showQQPlot) listOf(PlotCalculator.qq("Model residuals", fit.residuals)) else emptyList(),
+                qq = if (request.showQQPlot) listOf(if (request.modelQQBasis == ModelQQBasis.STANDARDIZED)
+                    PlotCalculator.qq("Standardized model residuals", fit.standardizedResiduals.filterNotNull().toDoubleArray(), identityReference = true)
+                        .copy(detail = "Internally standardized residuals e / (residual SD × sqrt(1 − leverage)). ${fit.standardizedResiduals.count { it == null }} undefined values are omitted from this plot only. Shapiro–Wilk and residuals versus fitted retain raw model residuals.")
+                    else PlotCalculator.qq("Raw model residuals", fit.residuals)) else emptyList(),
                 scatter = if (request.showScatterplot) ScatterPlot("Fitted ${data.columns[request.first]}", "Residual", fit.fitted.indices.map { PlotPoint(fit.fitted[it], fit.residuals[it]) }, null) else null) else null,
             notes = buildList {
                 add("Model: ${fit.modelFormula}. Uses the same complete observations for every term, diagnostic and marginal comparison. Factor values are categorical, including numeric labels.")
                 add("Factors use sum-to-zero contrasts. Type III tests each term conditional on every other term; Type II omits higher-order relatives when testing a lower-order term; Type I is sequential in the displayed term order. Term sums need not add to the total for Types II/III.")
                 add("The headline F tests the full model against an intercept-only model. Individual term tests and partial eta-squared are in the ANOVA table. Interpret interactions before marginal main effects.")
-                add("Assumes independent observations, a correctly specified mean model and common residual variance. Residual and variance diagnostics do not establish these assumptions or causality. Levene's check, when selected, uses observed factor cells and group medians.")
+                add("Assumes independent observations, a correctly specified mean model and common residual variance. Residual and variance diagnostics do not establish these assumptions or causality.")
+                if (request.checkVariances) add(if (request.modelHomogeneity == ModelHomogeneity.MODEL_RESIDUALS)
+                    "Homogeneity uses an ANOVA of absolute fitted-model residuals across observed factor cells, following jamovi. It retains the fitted covariate effects and does not center the residuals again within cells."
+                    else "Homogeneity uses median-centered Levene on the raw outcome within observed factor cells (Brown–Forsythe), without covariate adjustment.")
                 if (request.method == AnalysisMethod.ANCOVA) add("Covariates have common linear slopes in the fitted model. The optional slope check jointly adds each included factor term × each covariate; it does not change the main fitted model. A nonsignificant check does not prove equal slopes.")
                 add("Supports ${if (request.method == AnalysisMethod.ANCOVA) "1–3 factors and 1–6 covariates" else "2–3 factors"}, 2–6 levels per factor, up to 60 level combinations and 60 parameters. Rank-deficient or numerically unstable models are rejected; no levels or predictors are silently dropped.")
             })
+    }
+
+    private fun residualHomogeneity(residuals: DoubleArray, cells: List<List<Int>>): AssumptionCheck {
+        val name = "Levene (model residuals)"
+        val df = listOf(cells.size - 1.0, residuals.size - cells.size.toDouble())
+        return try {
+            require(cells.size >= 2 && residuals.size > cells.size) { "Homogeneity needs multiple factor cells and positive within-cell degrees of freedom." }
+            val absolute = cells.map { indices -> DoubleArray(indices.size) { abs(residuals[indices[it]]) } }
+            val within = absolute.sumOf { values ->
+                val mean = MatrixMath.sum(values) / values.size
+                MatrixMath.sum(DoubleArray(values.size) { (values[it] - mean) * (values[it] - mean) })
+            }
+            val energy = absolute.sumOf { MatrixMath.dot(it, it) }
+            require(within.isFinite() && within > energy * 1e-28 && within > 0.0) {
+                "Homogeneity has no reliably measurable within-cell variation in absolute model residuals. The main model is retained."
+            }
+            val test = OneWayAnova.withDefaults().test(absolute)
+            require(test.statistic.isFinite() && test.pValue.isFinite()) { "The model-residual homogeneity check is undefined for these factor cells." }
+            AssumptionCheck(name, "Observed factor cells", residuals.size, TestResult("F", test.statistic, test.pValue), df,
+                "ANOVA of absolute fitted-model residuals across cells; includes the fitted covariate effects.")
+        } catch (error: IllegalArgumentException) {
+            AssumptionCheck(name, "Observed factor cells", residuals.size, null, df, error.message)
+        }
     }
 }

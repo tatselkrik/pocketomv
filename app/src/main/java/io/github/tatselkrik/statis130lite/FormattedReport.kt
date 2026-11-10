@@ -32,17 +32,16 @@ internal fun AnalysisResult.formattedReport(source: String, fictional: Boolean, 
                     listOf(bin.intervalLabel(i == numeric.histogram.lastIndex), bin.count.toString())
                 })
             }
-            if (summary.showBarChart && summary.frequencies.isNotEmpty()) {
-                summary.frequencies.take(20).chunked(10).forEachIndexed { index, values ->
+            if (summary.showBarChart && summary.validCount > 0 && summary.frequencies.isNotEmpty()) {
+                val observed = summary.frequencies.filter { it.count > 0 }
+                observed.take(20).chunked(10).forEachIndexed { index, values ->
                     add(ReportBlock.Figure("Bar chart · ${summary.label} · ${index + 1}",
                         ReportCharts.bars(values, summary.frequencies.maxOf { it.count }),
                         "Category counts on a shared frequency scale; labels are shortened in the figure and given in full in the frequency table." +
-                            if (summary.frequencies.size > 20) " Figures show the first 20 categories in label order. The table retains every category." else ""))
+                            if (observed.size > 20) " Figures show the first 20 observed categories in label order. The table retains every observed category." else ""))
                 }
             }
-            table(detailTitle("Value frequencies"), listOf("Value", "Count", "Percent"), summary.frequencies.map {
-                listOf(it.value, it.count.toString(), formatStatistic(it.percent))
-            })
+            add(ReportBlock.Table(summary.frequencyTable(detailTitle("Value frequencies"))))
             summary.notes.forEach { paragraph(it) }
         }
         if (estimates.isNotEmpty()) table("Estimates", listOf("Parameter", "Estimate", "95% CI"), estimates.map {
@@ -71,7 +70,8 @@ internal fun AnalysisResult.formattedReport(source: String, fictional: Boolean, 
         if (method != AnalysisMethod.DESCRIPTIVES) tables.forEach { add(ReportBlock.Table(it)) }
         plots?.let { plots ->
             plots.scree?.let { add(ReportBlock.Figure("Scree plot", ReportCharts.scree(it),
-                "Correlation eigenvalues in descending order. Parallel thresholds, when shown, are the 95th percentile of 200 Gaussian null correlation samples of the same N and variable count. Every value is retained in the eigenvalue table.")) }
+                "${it.basis.label} in descending order. " + (if (it.parallel95.isNotEmpty()) "Parallel thresholds are 95th percentiles from ${it.replications} null simulations" +
+                    (it.seed?.let { seed -> " with seed $seed" } ?: "") + " of the same N and variable count. " else "") + "Every value is retained in the eigenvalue table.")) }
             if (plots.boxes.isNotEmpty()) {
                 table("Boxplot summaries", boxplotHeaders, plots.boxes.map { it.displayRow() })
                 val axis = PlotAxis(plots.boxes.minOf { it.minimum }, plots.boxes.maxOf { it.maximum })
@@ -82,7 +82,7 @@ internal fun AnalysisResult.formattedReport(source: String, fictional: Boolean, 
             plots.qq.forEach { qq ->
                 if (qq.unavailable != null) paragraph("Normal Q–Q · ${qq.label}: ${qq.unavailable}") else add(ReportBlock.Figure(
                     "Normal Q–Q · ${qq.label}", ReportCharts.points(qq.points, "Theoretical normal quantiles", "Observed values", qq.reference),
-                    "N = ${qq.size}. Quartile reference line; appearance alone does not establish normality."))
+                    "N = ${qq.size}. ${qq.referenceLabel}; appearance alone does not establish normality." + (qq.detail?.let { " $it" } ?: "")))
             }
             plots.scatter?.let { scatter -> add(ReportBlock.Figure(
                 if (method.usesResiduals) "Residuals vs fitted" else "Scatterplot",

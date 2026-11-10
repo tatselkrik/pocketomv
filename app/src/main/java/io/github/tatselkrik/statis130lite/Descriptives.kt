@@ -8,7 +8,7 @@ import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.sqrt
 
-data class ValueFrequency(val value: String, val count: Int, val percent: Double)
+data class ValueFrequency(val value: String, val count: Int, val percent: Double, val withinGroupPercent: Double? = null)
 data class PercentileValue(val percent: Double, val value: Double)
 data class HistogramBin(val lower: Double, val upper: Double, val count: Int)
 data class WeightedMean(val value: Double, val positiveCases: Int, val missingWeights: Int, val zeroWeights: Int)
@@ -40,11 +40,14 @@ data class DescriptiveSummary(
     val showBarChart: Boolean = false,
     val notes: List<String> = emptyList(),
     val numericData: Boolean = numeric != null,
+    val frequencyPooledN: Int? = null,
 ) {
     val label: String get() = if (group == null) variable else "$variable · $group"
+    val mode: String? get() = modes.firstOrNull()
 }
 
 internal object Descriptives {
+    internal const val MAX_ZERO_FILLED_FREQUENCIES = 200_000
     fun calculate(data: CourseData, request: AnalysisRequest): AnalysisResult {
         require(request.method == AnalysisMethod.DESCRIPTIVES)
         val selected = request.descriptiveVariables ?: listOf(request.first)
@@ -88,6 +91,34 @@ internal object Descriptives {
                     if (request.showQQPlot) qq.add(PlotCalculator.qq(summary.label, values))
                 }
             }
+        }
+        if (request.splitBy != null) {
+            val byVariable = descriptions.indices.groupBy { descriptions[it].variable }
+            val levels = selected.associate { column -> data.columns[column] to data.rows.mapNotNull { row ->
+                val raw = row[column].trim()
+                if (request.descriptiveNumeric) raw.takeUnless { it.isMissingNumber() }?.toDoubleOrNull()?.takeIf(Double::isFinite)?.let(::descriptiveValue)
+                else raw.takeIf(String::isNotEmpty)
+            }.distinct().let { labels -> if (request.descriptiveNumeric) labels.sortedBy(String::toDouble) else labels.sorted() } }
+            val zeroFilledSize = byVariable.entries.sumOf { (variable, indices) -> indices.size.toLong() * levels.getValue(variable).size }
+            val fillZeros = zeroFilledSize <= MAX_ZERO_FILLED_FREQUENCIES
+            for ((variable, indices) in byVariable) {
+                val pooledN = indices.sumOf { descriptions[it].validCount }
+                for (i in indices) {
+                    val summary = descriptions[i]
+                    val observed = summary.frequencies.associateBy { it.value }
+                    val labels = if (fillZeros) levels.getValue(variable) else summary.frequencies.map { it.value }
+                    val frequencies = labels.map { value ->
+                        val count = observed[value]?.count ?: 0
+                        ValueFrequency(value, count, if (pooledN > 0) count * 100.0 / pooledN else Double.NaN,
+                            if (summary.validCount > 0) count * 100.0 / summary.validCount else null)
+                    }
+                    descriptions[i] = summary.copy(frequencies = frequencies, frequencyPooledN = pooledN,
+                        notes = summary.notes + "Frequency percentages use pooled valid N = $pooledN for this variable across groups, as in jamovi. The separate within-group column uses this group's N = ${summary.validCount}; percentages without a valid denominator are unavailable." +
+                            if (!fillZeros) listOf("Zero-count category rows are omitted because the full grouped frequency grid exceeds $MAX_ZERO_FILLED_FREQUENCIES cells. Every observed category and its pooled percentage is retained.") else emptyList())
+                }
+            }
+            allNotes.add("Grouped frequency percentages use each variable's pooled valid N across nonblank groups. Within-group percentages are shown separately; counts, means and graphs keep their group samples.")
+            if (!fillZeros) allNotes.add("The grouped frequency grid exceeds $MAX_ZERO_FILLED_FREQUENCIES cells; zero-count rows are omitted, while all observed counts and percentages are retained.")
         }
         require(descriptions.any { it.validCount > 0 }) { "Select a variable with at least one non-missing value." }
         val included = groups.sumOf { (_, rows) -> rows.count { row -> selected.any { column ->
@@ -200,8 +231,7 @@ internal object Descriptives {
         numeric: NumericDescription?, notes: List<String>,
     ): AnalysisResult {
         val highest = frequencies.maxOf { it.count }
-        val uniform = frequencies.size > 1 && frequencies.all { it.count == highest }
-        val modes = if (highest == 1 || uniform) emptyList() else frequencies.filter { it.count == highest }.map { it.value }
+        val modes = frequencies.filter { it.count == highest }.map { it.value }
         return AnalysisResult(
             method = AnalysisMethod.DESCRIPTIVES,
             calculation = if (numeric == null) "Category frequencies and mode" else "Numeric summaries and distribution",
@@ -209,11 +239,7 @@ internal object Descriptives {
             includedCases = count.toLong(), excludedRows = data.rows.size - count,
             descriptions = listOf(DescriptiveSummary(data.columns[request.first], count, data.rows.size - count,
                 modes, highest, frequencies, numeric)),
-            notes = notes + when {
-                highest == 1 -> listOf("Every value occurs once, so no repeated mode is reported.")
-                uniform -> listOf("All distinct values have equal frequency, so no mode is reported under the introductory-course convention.")
-                else -> emptyList()
-            },
+            notes = notes + if (modes.size > 1) listOf("Multiple values share the highest frequency. Mode shows the first in sorted order; tied values are listed separately. This includes all-distinct and uniformly frequent samples, matching jamovi's numeric mode convention.") else emptyList(),
         )
     }
 
@@ -252,7 +278,7 @@ internal object Descriptives {
                     val values = summary.numeric
                     listOf(values?.mean, values?.standardDeviation, values?.median, values?.skewness, values?.excessKurtosis)
                         .map { it?.let(::formatStatistic) ?: "—" }
-                } else listOf(if (summary.validCount == 0) "—" else summary.modes.joinToString(", ").ifEmpty { "None" })
+                } else listOf(summary.mode ?: "—")
         }
         return AnalysisTable("Descriptives by variable and group", headers, rows,
             listOf("N and missing counts are specific to each variable within its group. Detailed summaries and frequency tables follow. Undefined statistics are shown as —."),

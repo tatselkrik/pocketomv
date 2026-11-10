@@ -397,6 +397,10 @@ private fun AnalysisScreen(state: AnalysisScreenState, model: AnalysisViewModel,
                         }
                         Text("Choose a frequency column when rows summarize counts.",
                             style = MaterialTheme.typography.bodySmall)
+                        if (request.count != null) ChoiceField("Missing frequency counts", request.countMissingPolicy,
+                            CountMissingPolicy.entries.map { it to it.label }, enabled) {
+                            model.configure(request.copy(countMissingPolicy = it))
+                        }
                     }
                     if (request.method == AnalysisMethod.ONE_SAMPLE_T) {
                         OutlinedTextField(

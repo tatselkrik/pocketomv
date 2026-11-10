@@ -25,10 +25,12 @@ class FisherFriedmanTest {
                 close(expected.getJSONObject("p"), tail.name, result.pValue)
                 close(expected, "cramer", result.estimates.single().value)
                 val measures = result.associations!!.values
-                close(expected,"phi",measures[0].value)
-                close(expected,"odds",measures[1].value)
-                close(expected,"oddsLow",measures[1].lower95)
-                close(expected,"oddsHigh",measures[1].upper95)
+                assertEquals(abs(expected.getDouble("phi")),measures[0].value,1e-12)
+                close(expected,"phi",measures.single { it.label=="Phi (signed)" }.value)
+                val sampleOdds=measures.firstOrNull { it.label=="Odds ratio (uncorrected sample)" }?:measures[1]
+                close(expected,"odds",sampleOdds.value)
+                close(expected,"oddsLow",sampleOdds.lower95)
+                close(expected,"oddsHigh",sampleOdds.upper95)
                 close(expected,"risk",measures[2].value)
                 close(expected,"riskLow",measures[2].lower95)
                 close(expected,"riskHigh",measures[2].upper95)
@@ -43,7 +45,8 @@ class FisherFriedmanTest {
         val reverse = Statistics.run(data, request.copy(comparisonGroup = "B", tail = Tail.LESS))
         assertEquals(initial.pValue,reverse.pValue,1e-14)
         val first = initial.associations!!.values; val second = reverse.associations!!.values
-        assertEquals(-first[0].value,second[0].value,1e-14)
+        assertEquals(first[0].value,second[0].value,1e-14)
+        assertEquals(-first.single { it.label=="Phi (signed)" }.value,second.single { it.label=="Phi (signed)" }.value,1e-14)
         assertEquals(1/first[1].value,second[1].value,1e-12)
         assertEquals(1/first[2].value,second[2].value,1e-12)
         assertEquals("A",reverse.associations.referenceGroup)
@@ -59,14 +62,17 @@ class FisherFriedmanTest {
         assertTrue(result.notes.any { it.contains("A versus B") && it.contains("event: Other") })
     }
 
-    @Test fun zeroCellsHaveHonestBoundaryEstimatesAndUnavailableWaldIntervals() {
+    @Test fun zeroCellsRetainUncorrectedBoundariesAlongsideJamoviCorrectedOddsAndIntervals() {
         val data = categorical(listOf(5L,0L,0L,7L))
         val result = Statistics.run(data,request)
         assertEquals(Double.POSITIVE_INFINITY,result.statistic,0.0)
         assertEquals(1.0,result.associations!!.values[0].value,0.0)
-        assertNull(result.associations.values[1].lower95)
+        assertNotNull(result.associations.values[1].lower95)
+        assertTrue(result.associations.values[1].value.isFinite())
+        val raw=result.associations.values.single { it.label=="Odds ratio (uncorrected sample)" }
+        assertEquals(Double.POSITIVE_INFINITY,raw.value,0.0);assertNull(raw.lower95)
         assertNull(result.associations.values[2].lower95)
-        assertTrue(result.tables.single().rows[1].last().contains("no continuity correction"))
+        assertTrue(result.tables.single().rows[1].last().contains("0.5"))
         assertTrue(result.asReport("Fictional",true).contains("∞"))
     }
 
@@ -87,7 +93,7 @@ class FisherFriedmanTest {
     @Test fun missingRowsAreExcludedAndZeroOnlyCategoriesDoNotExpandTheTable() {
         val data = categorical(listOf(1L,9L,11L,3L)).let { it.copy(rows=it.rows+listOf(
             listOf("Ghost","Event","0"),listOf("","Event","3"),listOf("A","Other","NA"))) }
-        val result = Statistics.run(data,request)
+        val result = Statistics.run(data,request.copy(countMissingPolicy=CountMissingPolicy.OMIT))
         assertEquals(24L,result.includedCases); assertEquals(2,result.excludedRows)
         assertEquals(listOf("A","B"),result.frequencies!!.rowLabels)
     }

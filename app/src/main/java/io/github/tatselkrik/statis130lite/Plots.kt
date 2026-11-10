@@ -22,6 +22,14 @@ data class PlotAxis(val minimum: Double, val maximum: Double) {
     }
 
     val midpoint: Double get() = minimum / 2.0 + maximum / 2.0
+
+    fun label(value: Double): String {
+        val scale = max(abs(minimum), abs(maximum))
+        // Round only a machine-scale zero tick relative to this axis, never its data.
+        val displayed = if (scale > 0.0 && abs(value) / scale <= 1e-14) 0.0 else value
+        return if (minimum != maximum && formatStatistic(minimum) == formatStatistic(maximum)) displayed.toString()
+            else formatStatistic(displayed)
+    }
 }
 
 data class BoxPlotSummary(
@@ -33,7 +41,11 @@ data class BoxPlotSummary(
 data class NormalQQPlot(
     val label: String, val size: Int, val points: List<PlotPoint>,
     val q1: Double, val q3: Double, val reference: PlotLine?, val unavailable: String? = null,
-)
+    val identityReference: Boolean = false,
+    val detail: String? = null,
+) {
+    val referenceLabel: String get() = if (identityReference) "Identity reference line (y = x)" else "Quartile reference line"
+}
 
 data class ScatterPlot(
     val xLabel: String, val yLabel: String, val points: List<PlotPoint>, val fittedLine: PlotLine?,
@@ -118,13 +130,14 @@ internal object PlotCalculator {
         return high / scale - low / scale > 1.5 * (q3 / scale - q1 / scale)
     }
 
-    fun qq(label: String, values: DoubleArray): NormalQQPlot {
-        require(values.isNotEmpty() && values.all(Double::isFinite))
+    fun qq(label: String, values: DoubleArray, identityReference: Boolean = false): NormalQQPlot {
+        require((values.isNotEmpty() || identityReference) && values.all(Double::isFinite))
+        if (values.isEmpty()) return NormalQQPlot(label, 0, emptyList(), Double.NaN, Double.NaN, null, "No finite standardized residuals remain for this plot.", identityReference = true)
         val sorted = values.sortedArray()
         val q1 = Descriptives.percentile(sorted, 25.0)
         val q3 = Descriptives.percentile(sorted, 75.0)
-        if (sorted.size < 3) return NormalQQPlot(label, sorted.size, emptyList(), q1, q3, null,
-            "At least 3 observations are needed for a useful normal Q–Q plot.")
+        if (sorted.size < (if (identityReference) 2 else 3)) return NormalQQPlot(label, sorted.size, emptyList(), q1, q3, null,
+            if (identityReference) "At least 2 observations are needed for this normal Q–Q plot." else "At least 3 observations are needed for a useful normal Q–Q plot.", identityReference)
         val a = if (sorted.size <= 10) 0.375 else 0.5
         // Mirror the lower half to preserve exact symmetry on the displayed theoretical axis.
         val z = DoubleArray(sorted.size)
@@ -134,6 +147,8 @@ internal object PlotCalculator {
         }
         val points = sorted.mapIndexed { i, y -> PlotPoint(z[i], y) }
         val yAxis = PlotAxis(sorted.first(), sorted.last())
+        if (identityReference) return NormalQQPlot(label, sorted.size, points, q1, q3,
+            PlotLine(yAxis.fraction(points.first().x), yAxis.fraction(points.last().x)), identityReference = true)
         val y1 = yAxis.fraction(q1)
         val y3 = yAxis.fraction(q3)
         val slope = (y3 - y1) / (2 * zQuartile)

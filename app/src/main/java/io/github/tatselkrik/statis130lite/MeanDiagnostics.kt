@@ -40,26 +40,44 @@ internal object MeanDiagnostics {
         if (!request.checkNormality && !request.checkVariances && !request.pairwiseComparisons) return result
         val grouped = request.method == AnalysisMethod.INDEPENDENT_T || request.method == AnalysisMethod.ANOVA
         val groups = if (grouped) Statistics.readGroups(data, request) else emptyList()
+        val normalityBasis = if (request.method == AnalysisMethod.INDEPENDENT_T) request.independentNormality else request.anovaNormality
         val checks = buildList {
             if (request.checkNormality) {
                 when (request.method) {
                     AnalysisMethod.ONE_SAMPLE_T -> add(normality(data.columns[request.first], Statistics.readNumbers(data, request.first)))
                     AnalysisMethod.PAIRED_T -> add(normality("Paired differences", Statistics.readPairs(data, request).differences()))
-                    AnalysisMethod.INDEPENDENT_T, AnalysisMethod.ANOVA -> groups.forEach { add(normality(it.label, it.values)) }
+                    AnalysisMethod.INDEPENDENT_T, AnalysisMethod.ANOVA -> {
+                        if (normalityBasis != NormalityBasis.GROUPS)
+                            add(residualNormality(groups, request.method == AnalysisMethod.ANOVA))
+                        if (normalityBasis != NormalityBasis.RESIDUALS)
+                            groups.forEach { add(normality(it.label, it.values)) }
+                    }
                     else -> error("Unsupported normality check")
                 }
             }
-            if (request.checkVariances) add(levene(groups))
+            if (request.checkVariances) add(levene(groups, request.meanLeveneCenter))
         }
         val notes = mutableListOf<String>()
         if (checks.isNotEmpty()) {
-            notes.add("Assumption checks use the same included observations as the main analysis. Independence of observations depends on study design and cannot be established from this table.")
+            notes.add("Assumption checks start from the main analysis's included observations; diagnostic notes explain any undefined residuals. Independence of observations depends on study design and cannot be established from this table.")
             notes.add("Small diagnostic p-values suggest a departure from the tested assumption. A nonsignificant result does not prove normality or equal variances; small samples can miss important departures.")
         }
-        if (request.checkNormality) notes.add(if (request.method == AnalysisMethod.PAIRED_T)
-            "Shapiro–Wilk checks the paired differences, not the two measurements separately. P-values use the Royston AS R94 approximation (exact for N = 3); supported N is 3–5,000."
-        else "Shapiro–Wilk checks each sample separately (within each group for grouped analyses). Its diagnostic p-values are unadjusted. P-values use the Royston AS R94 approximation (exact for N = 3); supported N is 3–5,000.")
-        if (request.checkVariances) notes.add("Levene's check is centered on group medians (the Brown–Forsythe variant). It tests equal group variances and does not automatically change the main test.")
+        if (request.checkNormality) {
+            val basis = when (request.method) {
+                AnalysisMethod.PAIRED_T -> "Checks complete-pair differences rather than the measurements separately."
+                AnalysisMethod.INDEPENDENT_T, AnalysisMethod.ANOVA -> when (normalityBasis) {
+                    NormalityBasis.RESIDUALS -> if (request.method == AnalysisMethod.ANOVA)
+                        "Checks standardized model residuals, following jamovi's one-way ANOVA. Group-centered residuals are adjusted for group-size leverage, using 1/sqrt(1 − 1/group N); a common residual-SD scale does not change Shapiro–Wilk."
+                        else "Checks pooled group-centered residuals, following jamovi's independent t test. Each included observation has its own group mean removed."
+                    NormalityBasis.GROUPS -> "Checks each included group separately."
+                    NormalityBasis.BOTH -> if (request.method == AnalysisMethod.ANOVA) "Checks leverage-standardized model residuals and each included group separately."
+                        else "Checks pooled group-centered residuals and each included group separately."
+                }
+                else -> "Checks the selected sample."
+            }
+            notes.add("Shapiro–Wilk: $basis Diagnostic p-values are unadjusted. P-values use the Royston AS R94 approximation (exact for N = 3); supported N is 3–5,000 per check.")
+        }
+        if (request.checkVariances) notes.add("Levene's check is centered on group ${if (request.meanLeveneCenter == LeveneCenter.MEAN) "means, following jamovi" else "medians (the Brown–Forsythe variant)"}. It tests equal group variances and does not automatically change the main test.")
         val followUp = if (request.pairwiseComparisons) pairwise(groups, request.equalVariance) else null
         return result.copy(assumptionChecks = checks, followUp = followUp, notes = result.notes + notes)
     }
@@ -70,29 +88,58 @@ internal object MeanDiagnostics {
         AssumptionCheck("Shapiro–Wilk", label, values.size, null, note = error.message)
     }
 
-    internal fun levene(groups: List<Statistics.Group>): AssumptionCheck {
+    /** Common scaling preserves relative group spreads; subtract origins before scaling. */
+    internal fun groupResiduals(groups: List<Statistics.Group>, adjustLeverage: Boolean = false): DoubleArray {
+        val differences = groups.map { group -> DoubleArray(group.values.size) { group.values[it] - group.values[0] } }
+        val shifted = differences.all { group -> group.all(Double::isFinite) }
+        val scale = (if (shifted) differences.maxOf { group -> group.maxOf { abs(it) } }
+            else groups.maxOf { group -> group.values.maxOf { abs(it) } }).takeIf { it > 0.0 } ?: 1.0
+        return groups.indices.flatMap { i ->
+            val n = groups[i].values.size
+            if (adjustLeverage && n == 1) return@flatMap emptyList<Double>()
+            val values = DoubleArray(n) { j -> (if (shifted) differences[i][j] else groups[i].values[j]) / scale }
+            val mean = MatrixMath.sum(values) / values.size
+            val divisor = if (adjustLeverage) sqrt(1 - 1.0/n) else 1.0
+            values.map { (it - mean)/divisor }
+        }.toDoubleArray()
+    }
+
+    private fun residualNormality(groups: List<Statistics.Group>, standardized: Boolean): AssumptionCheck {
+        val label = if (standardized) "Standardized model residuals" else "Group-centered residuals"
+        val modelN = groups.sumOf { it.values.size }
+        if (standardized && modelN > 5000) return AssumptionCheck("Shapiro–Wilk", label, modelN, null,
+            note = "Shapiro–Wilk supports 3 to 5,000 model observations.")
+        val residuals = groupResiduals(groups, standardized)
+        val check = normality(label, residuals)
+        return if (residuals.size == modelN) check else check.copy(note = listOfNotNull(check.note,
+            "${modelN-residuals.size} singleton-group observations have undefined leverage-standardized residuals and are omitted from this check; the main ANOVA retains them.").joinToString(" "))
+    }
+
+    internal fun levene(groups: List<Statistics.Group>, center: LeveneCenter = LeveneCenter.MEDIAN): AssumptionCheck {
         val n = groups.sumOf { it.values.size }
+        val name = if (center == LeveneCenter.MEAN) "Levene (mean)" else "Levene (median)"
         return try {
             require(groups.all { it.values.size >= 2 }) { "Levene's check needs at least two observations in every group." }
-            val minimum = groups.minOf { it.values.min() }
-            val range = groups.maxOf { it.values.max() } - minimum
-            require(range > 0.0 && range.isFinite()) { "Levene's check is unavailable for constant data." }
+            val residuals = groupResiduals(groups)
+            var offset = 0
             val deviations = groups.map { group ->
-                val sorted = group.values.map { (it - minimum) / range }.sorted()
+                val sorted = residuals.copyOfRange(offset, offset + group.values.size).sorted()
+                offset += group.values.size
                 if (sorted.size == 2) DoubleArray(2) { (sorted[1] - sorted[0]) / 2.0 } else {
                     val middle = sorted.size / 2
-                    val median = if (sorted.size % 2 == 0) (sorted[middle - 1] + sorted[middle]) / 2.0 else sorted[middle]
-                    DoubleArray(sorted.size) { abs(sorted[it] - median) }
+                    val location = if (center == LeveneCenter.MEAN) Mean.of(*sorted.toDoubleArray()).asDouble
+                        else if (sorted.size % 2 == 0) (sorted[middle - 1] + sorted[middle]) / 2.0 else sorted[middle]
+                    DoubleArray(sorted.size) { abs(sorted[it] - location) }
                 }
             }
             val within = deviations.sumOf { Variance.of(*it).asDouble * (it.size - 1) }
             require(within > 0.0 && within.isFinite()) { "Levene's check needs variation in the absolute deviations within groups." }
             val test = OneWayAnova.withDefaults().test(deviations)
             require(test.statistic.isFinite() && test.pValue.isFinite()) { "Levene's check is undefined for these deviations." }
-            AssumptionCheck("Levene (median)", "All groups", n, TestResult("F", test.statistic, test.pValue),
+            AssumptionCheck(name, "All groups", n, TestResult("F", test.statistic, test.pValue),
                 listOf(groups.size - 1.0, n - groups.size.toDouble()))
         } catch (error: IllegalArgumentException) {
-            AssumptionCheck("Levene (median)", "All groups", n, null, note = error.message)
+            AssumptionCheck(name, "All groups", n, null, note = error.message)
         }
     }
 

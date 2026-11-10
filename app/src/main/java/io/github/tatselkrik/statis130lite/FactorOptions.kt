@@ -29,9 +29,16 @@ internal fun FactorialOptions(data: CourseData, request: AnalysisRequest, enable
     ChoiceField("Sums of squares", request.sumsOfSquares, SumsOfSquares.entries.map { it to it.label }, enabled) { onChange(request.copy(sumsOfSquares = it)) }
     CheckOption("Estimated marginal means", request.modelMarginalMeans, enabled) { onChange(request.copy(modelMarginalMeans = it)) }
     CheckOption("Compare marginal means", request.modelComparisons, enabled) { onChange(request.copy(modelComparisons = it)) }
-    if (request.modelComparisons) ChoiceField("Comparison p-value adjustment", request.modelAdjustment,
-        FriedmanAdjustment.entries.map { it to it.label }, enabled) { onChange(request.copy(modelAdjustment = it)) }
-    Text("Marginal means give the other factor levels equal weight and hold covariates at their means. Interpret interactions before averaged main effects. Comparison adjustment covers every displayed pair together.", style = MaterialTheme.typography.bodySmall)
+    if (request.modelComparisons) {
+        ChoiceField("Comparison p-value adjustment", request.modelAdjustment,
+            ModelAdjustment.entries.map { it to it.label }, enabled) { onChange(request.copy(modelAdjustment = it,
+                modelComparisonFamily = if (it == ModelAdjustment.TUKEY) ModelComparisonFamily.PER_FACTOR else request.modelComparisonFamily)) }
+        if (request.modelAdjustment != ModelAdjustment.TUKEY) ChoiceField("Comparison family", request.modelComparisonFamily,
+            ModelComparisonFamily.entries.map { it to it.label }, enabled) { onChange(request.copy(modelComparisonFamily = it)) }
+    }
+    Text("Marginal means give the other factor levels equal weight and hold covariates at their means. Interpret interactions before averaged main effects. " +
+        if (request.modelAdjustment == ModelAdjustment.TUKEY || request.modelComparisonFamily == ModelComparisonFamily.PER_FACTOR) "Comparison adjustment treats each factor separately."
+        else "Comparison adjustment covers every displayed pair together.", style = MaterialTheme.typography.bodySmall)
 }
 
 @Composable
@@ -41,16 +48,32 @@ internal fun FactorAnalysisOptions(data: CourseData, request: AnalysisRequest, e
     Text("Select 3–20 varying numeric items. Leave IDs and previously calculated total scores unselected. Uses complete participants and Pearson correlations.", style = MaterialTheme.typography.bodySmall)
     ChoiceField("Factor count", request.factorCountMethod, FactorCountMethod.entries.map { it to it.label }, enabled) { onChange(request.copy(factorCountMethod = it)) }
     if (request.factorCountMethod == FactorCountMethod.FIXED) FactorNumberField("Number of factors", request.factorCount, enabled, false) { onChange(request.copy(factorCount = it)) }
-    if (request.factorCountMethod == FactorCountMethod.EIGENVALUE) FactorNumberField("Minimum eigenvalue (strictly greater)", request.factorEigenvalue, enabled) { onChange(request.copy(factorEigenvalue = it)) }
-    if (request.factorCountMethod == FactorCountMethod.PARALLEL) Text("200 Gaussian null correlation matrices, 95th-percentile thresholds and a fixed seed. This PCA-eigenvalue retention rule can differ from jamovi's common-factor parallel analysis. A zero-factor suggestion is retained.", style = MaterialTheme.typography.bodySmall)
+    if (request.factorCountMethod != FactorCountMethod.PARALLEL)
+        ChoiceField("Eigenvalue basis", request.factorEigenvalueBasis, EigenvalueBasis.entries.map { it to it.label }, enabled) { onChange(request.copy(factorEigenvalueBasis = it)) }
+    if (request.factorCountMethod == FactorCountMethod.EIGENVALUE) {
+        FactorNumberField("Minimum eigenvalue (strictly greater)", request.factorEigenvalue, enabled) { onChange(request.copy(factorEigenvalue = it)) }
+    }
+    if (request.factorCountMethod == FactorCountMethod.PARALLEL) {
+        ChoiceField("Parallel method", request.factorParallelMethod, FactorParallelMethod.entries.map { it to it.label }, enabled) { onChange(request.copy(factorParallelMethod = it)) }
+        FactorNumberField("Parallel-analysis seed", request.factorParallelSeed, enabled, false) { onChange(request.copy(factorParallelSeed = it)) }
+        Text(if (request.factorParallelMethod == FactorParallelMethod.COMMON_FACTOR)
+            "20 Gaussian null datasets and common-factor 95th-percentile thresholds. Matches the reference protocol when the seed and RNG kind match. Its minimum one-factor suggestion does not establish a usable factor model."
+            else "200 seeded Wishart null correlations and PCA 95th-percentile thresholds. Its work is independent of sample size; a zero-factor suggestion is retained.", style = MaterialTheme.typography.bodySmall)
+    }
     ChoiceField("Extraction", request.factorExtraction, FactorExtraction.entries.map { it to it.label }, enabled) { onChange(request.copy(factorExtraction = it)) }
+    if (request.factorExtraction == FactorExtraction.MINRES) ChoiceField("MINRES fit stopping", request.minresConvergence,
+        MinresConvergence.entries.map { it to it.label }, enabled) { onChange(request.copy(minresConvergence = it)) }
+    if (request.factorExtraction == FactorExtraction.PRINCIPAL_AXIS) ChoiceField("Principal axis convergence", request.principalAxisConvergence,
+        PrincipalAxisConvergence.entries.map { it to it.label }, enabled) { onChange(request.copy(principalAxisConvergence = it)) }
     ChoiceField("Rotation", request.factorRotation, FactorRotation.entries.map { it to it.label }, enabled) { onChange(request.copy(factorRotation = it)) }
+    if (request.factorRotation in listOf(FactorRotation.VARIMAX, FactorRotation.PROMAX)) ChoiceField(if (request.factorRotation == FactorRotation.PROMAX) "Varimax starter stopping" else "Varimax stopping", request.varimaxConvergence,
+        VarimaxConvergence.entries.map { it to it.label }, enabled) { onChange(request.copy(varimaxConvergence = it)) }
     FactorNumberField("Hide absolute loadings below", request.factorLoadingCutoff, enabled) { onChange(request.copy(factorLoadingCutoff = it)) }
     CheckOption("Sort loadings by factor and size", request.factorSortLoadings, enabled) { onChange(request.copy(factorSortLoadings = it)) }
     CheckOption("Scree plot", request.factorScreePlot, enabled) { onChange(request.copy(factorScreePlot = it)) }
     CheckOption("KMO and individual MSA", request.factorKmo, enabled) { onChange(request.copy(factorKmo = it)) }
     CheckOption("Bartlett's sphericity test", request.factorBartlett, enabled) { onChange(request.copy(factorBartlett = it)) }
-    Text("Varimax keeps factors uncorrelated; Promax allows correlations and reports both pattern and structure matrices. These analyses do not establish questionnaire validity.", style = MaterialTheme.typography.bodySmall)
+    Text("Varimax keeps factors uncorrelated. Oblimin and Promax allow correlations and report both pattern and structure matrices. These analyses do not establish questionnaire validity.", style = MaterialTheme.typography.bodySmall)
 }
 
 @Composable

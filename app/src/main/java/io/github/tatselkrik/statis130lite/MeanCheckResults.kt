@@ -16,9 +16,28 @@ internal fun MeanCheckOptions(request: AnalysisRequest, enabled: Boolean, onChan
         CheckOption("Shapiro–Wilk normality", request.checkNormality, enabled) {
             onChange(request.copy(checkNormality = it))
         }
+        val grouped = request.method == AnalysisMethod.INDEPENDENT_T || request.method == AnalysisMethod.ANOVA
+        val basis = if (request.method == AnalysisMethod.INDEPENDENT_T) request.independentNormality else request.anovaNormality
+        if (grouped && request.checkNormality) {
+            ChoiceField("Distribution to check", basis, NormalityBasis.entries.map {
+                it to if (request.method == AnalysisMethod.ANOVA && it == NormalityBasis.RESIDUALS) "Standardized model residuals" else it.label
+            }, enabled) {
+                onChange(if (request.method == AnalysisMethod.INDEPENDENT_T) request.copy(independentNormality = it) else request.copy(anovaNormality = it))
+            }
+        }
         Text(when (request.method) {
             AnalysisMethod.PAIRED_T -> "Checks the differences within complete pairs."
             AnalysisMethod.ONE_SAMPLE_T -> "Checks the selected sample's distribution."
+            AnalysisMethod.INDEPENDENT_T -> when (basis) {
+                NormalityBasis.RESIDUALS -> "Checks pooled residuals after subtracting each group's mean."
+                NormalityBasis.GROUPS -> "Checks the outcome separately within each group."
+                NormalityBasis.BOTH -> "Checks pooled group-centered residuals and the separate group distributions."
+            }
+            AnalysisMethod.ANOVA -> when (basis) {
+                NormalityBasis.RESIDUALS -> "Checks model residuals standardized for group-size leverage."
+                NormalityBasis.GROUPS -> "Checks the outcome separately within each group."
+                NormalityBasis.BOTH -> "Checks standardized model residuals and the separate group distributions."
+            }
             AnalysisMethod.FACTORIAL_ANOVA, AnalysisMethod.ANCOVA -> "Checks fitted-model residuals across the same complete observations."
             else -> "Checks the outcome separately within each group."
         }, style = MaterialTheme.typography.bodySmall)
@@ -26,7 +45,13 @@ internal fun MeanCheckOptions(request: AnalysisRequest, enabled: Boolean, onChan
             CheckOption("Levene variance check", request.checkVariances, enabled) {
                 onChange(request.copy(checkVariances = it))
             }
-            Text("Compares group variances using deviations from each group's median.", style = MaterialTheme.typography.bodySmall)
+            if (grouped && request.checkVariances) ChoiceField("Levene center", request.meanLeveneCenter,
+                LeveneCenter.entries.map { it to it.label }, enabled) { onChange(request.copy(meanLeveneCenter = it)) }
+            if (request.method.isFactorialModel && request.checkVariances) ChoiceField("Homogeneity basis", request.modelHomogeneity,
+                ModelHomogeneity.entries.map { it to it.label }, enabled) { onChange(request.copy(modelHomogeneity = it)) }
+            Text(if (request.method.isFactorialModel && request.modelHomogeneity == ModelHomogeneity.MODEL_RESIDUALS)
+                "Compares absolute fitted-model residuals across factor cells, including covariate effects."
+                else "Compares group variances using deviations from each group's ${if (grouped && request.meanLeveneCenter == LeveneCenter.MEAN) "mean" else "median"}.", style = MaterialTheme.typography.bodySmall)
         }
         if (request.method == AnalysisMethod.ANOVA) {
             Text("ANOVA follow-up (optional)", style = MaterialTheme.typography.titleSmall)
@@ -52,14 +77,14 @@ internal fun LazyListScope.meanCheckItems(result: AnalysisResult) {
             Text("${it.sample}: ${it.note}", style = MaterialTheme.typography.bodySmall)
         }
     }
-    result.assumptionChecks.filter { it.name == "Levene (median)" }.forEach { check -> item {
+    result.assumptionChecks.filter { it.name.startsWith("Levene (") }.forEach { check -> item {
         if (check.test != null) {
-            TitledTable("Homogeneity · Levene (median)", listOf("F", "df1", "df2", "p"), listOf(listOf(
+            TitledTable("Homogeneity · ${check.name}", listOf("F", "df1", "df2", "p"), listOf(listOf(
                 formatStatistic(check.test.statistic), formatStatistic(check.degreesOfFreedom[0]),
                 formatStatistic(check.degreesOfFreedom[1]), formatProbability(check.test.pValue),
             )))
         } else {
-            Text("Homogeneity · Levene (median)", style = MaterialTheme.typography.titleMedium)
+            Text("Homogeneity · ${check.name}", style = MaterialTheme.typography.titleMedium)
             Text(check.note ?: "This check is unavailable for the selected observations.")
         }
     } }

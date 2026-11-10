@@ -9,7 +9,8 @@ import kotlin.math.sin
 class AnalysisHardeningTest {
     @Test fun symmetricTwoFactorStructureDoesNotStopAtANonmaximalRotation() {
         val data=fictionalExample(AnalysisMethod.EFA)
-        val request=AnalysisRequest.forData(AnalysisMethod.EFA,data).copy(factorCountMethod=FactorCountMethod.FIXED,factorCount="2",factorRotation=FactorRotation.PROMAX)
+        // Hold extraction at its tight solution to isolate the rotation criterion.
+        val request=AnalysisRequest.forData(AnalysisMethod.EFA,data).copy(factorCountMethod=FactorCountMethod.FIXED,factorCount="2",factorRotation=FactorRotation.PROMAX,minresConvergence=MinresConvergence.TIGHT,varimaxConvergence=VarimaxConvergence.TIGHT)
         val result=ExploratoryFactors.compute(NumericMatrix.read(data,request.items,3,20),request)
         // Independently optimized Kaiser-varimax plane and power-4 Promax target.
         assertEquals(0.2989882873,result.phi!![0][1],5e-5)
@@ -42,7 +43,7 @@ class AnalysisHardeningTest {
 
     @Test fun independentVariablesDoNotProduceAForcedOrFabricatedFactor() {
         val data=CourseData(List(4) { "Item ${it+1}" },List(40) { row -> List(4) { item -> cos(2*Math.PI*(row+.5)*(item+1)/40).toString() } })
-        val base=AnalysisRequest.forData(AnalysisMethod.EFA,data)
+        val base=AnalysisRequest.forData(AnalysisMethod.EFA,data).copy(factorParallelMethod=FactorParallelMethod.PCA_WISHART)
         val result=Statistics.run(data,base)
         assertTrue(result.notes.any { it.contains("zero factors") });assertNull(result.test)
         assertEquals("0",result.tables.first().rows.single { it[0]=="Extracted factors" }[1])

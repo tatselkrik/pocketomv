@@ -44,12 +44,21 @@ internal object MatrixMath {
 
     fun standardize(values: DoubleArray): StandardColumn {
         val scale = values.maxOf { abs(it) }.takeIf { it > 0.0 } ?: 1.0
-        val normalized = DoubleArray(values.size) { values[it] / scale }
+        val origin = values.first()
+        val differences = DoubleArray(values.size) { values[it] - origin }
+        // Remove a shared offset before division so small, representable differences survive.
+        // Scaling first can lose those differences when the mean is much larger than the SD.
+        val shifted = differences.all(Double::isFinite)
+        val spread = if (shifted) differences.maxOf { abs(it) } else scale
+        if (spread == 0.0) return StandardColumn(scale, origin / scale,
+            if (values.size > 1) 0.0 else Double.NaN, DoubleArray(values.size))
+        val normalized = DoubleArray(values.size) { if (shifted) differences[it] / spread else values[it] / scale }
         val mean = sum(normalized) / values.size
         val centered = DoubleArray(values.size) { normalized[it] - mean }
         val sd = sqrt(dot(centered, centered) / (values.size - 1))
         val z = if (sd > 0.0) DoubleArray(values.size) { centered[it] / sd } else DoubleArray(values.size)
-        return StandardColumn(scale, mean, sd, z)
+        val ratio = spread / scale
+        return StandardColumn(scale, if (shifted) origin / scale + mean * ratio else mean, sd * ratio, z)
     }
 
     fun correlation(columns: List<StandardColumn>): Array<DoubleArray> = Array(columns.size) { i ->
@@ -141,14 +150,14 @@ internal object MatrixMath {
 
     data class Optimum(val x: DoubleArray, val value: Double, val converged: Boolean)
 
-    fun minimize(start: DoubleArray, objective: (DoubleArray) -> Pair<Double, DoubleArray>): Optimum {
+    fun minimize(start: DoubleArray, objective: (DoubleArray) -> Pair<Double, DoubleArray>, gradientTolerance: Double = 2e-7): Optimum {
         val n = start.size
         var x = start.copyOf()
         var evaluation = objective(x)
         var h = Array(n) { i -> DoubleArray(n) { if (it == i) 1.0 else 0.0 } }
         repeat(600) {
             val (value, gradient) = evaluation
-            if (gradient.maxOf { abs(it) } < 2e-7) return Optimum(x, value, true)
+            if (gradient.maxOf { abs(it) } < gradientTolerance) return Optimum(x, value, true)
             var direction = DoubleArray(n) { i -> -dot(h[i], gradient) }
             if (dot(direction, gradient) >= 0 || direction.any { !it.isFinite() }) {
                 h = Array(n) { i -> DoubleArray(n) { if (it == i) 1.0 else 0.0 } }
@@ -167,7 +176,7 @@ internal object MatrixMath {
                     else step *= 0.5
                 }
             }
-            if (!accepted) return Optimum(x, value, gradient.maxOf { abs(it) } < 2e-5)
+            if (!accepted) return Optimum(x, value, gradient.maxOf { abs(it) } < gradientTolerance * 100)
             val s = DoubleArray(n) { next[it] - x[it] }
             val y = DoubleArray(n) { nextEvaluation.second[it] - gradient[it] }
             val sy = dot(s, y)

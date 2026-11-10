@@ -6,7 +6,8 @@ import org.junit.Test
 
 class MeanDiagnosticsTest {
     private fun request(equal: Boolean = true) = AnalysisRequest(AnalysisMethod.ANOVA, first = 1, second = 0,
-        equalVariance = equal, checkNormality = true, checkVariances = true, pairwiseComparisons = true)
+        equalVariance = equal, checkNormality = true, anovaNormality = NormalityBasis.GROUPS, checkVariances = true,
+        meanLeveneCenter = LeveneCenter.MEDIAN, pairwiseComparisons = true)
     private fun fixture() = fictionalExample(AnalysisMethod.ANOVA)
     private fun references() = JSONObject(javaClass.classLoader!!.getResourceAsStream("mean-check-reference.json")!!
         .bufferedReader().use { it.readText() }).getJSONArray("cases")
@@ -94,7 +95,7 @@ class MeanDiagnosticsTest {
     @Test fun unavailableDiagnosticsDoNotDiscardAValidMainResult() {
         val data = parseDelimited("Group,Score\nA,1\nA,2\nB,4\nB,8")
         val result = Statistics.run(data, AnalysisRequest(AnalysisMethod.INDEPENDENT_T, first = 1, second = 0,
-            checkNormality = true, checkVariances = true))
+            checkNormality = true, independentNormality = NormalityBasis.GROUPS, checkVariances = true))
         assertNotNull(result.test)
         assertEquals(3, result.assumptionChecks.size)
         assertTrue(result.assumptionChecks.all { it.test == null && it.note != null })

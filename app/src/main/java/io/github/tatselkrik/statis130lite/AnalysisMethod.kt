@@ -72,11 +72,21 @@ enum class FriedmanAdjustment(val label: String) {
     HOLM("Holm"), BONFERRONI("Bonferroni"), NONE("Unadjusted"),
 }
 
+enum class NormalityBasis(val label: String) {
+    RESIDUALS("Group-centered residuals"), GROUPS("Separate groups"), BOTH("Residuals and groups"),
+}
+enum class LeveneCenter(val label: String) { MEAN("Mean"), MEDIAN("Median (Brown–Forsythe)") }
+
+enum class CountMissingPolicy(val label: String) {
+    REJECT("Require complete counts"), OMIT("Omit rows with missing counts"),
+}
+
 data class AnalysisRequest(
     val method: AnalysisMethod = AnalysisMethod.ONE_SAMPLE_T,
     val first: Int = 0,
     val second: Int = 1,
     val count: Int? = null,
+    val countMissingPolicy: CountMissingPolicy = CountMissingPolicy.REJECT,
     val reference: String = "0",
     val tail: Tail = Tail.TWO_SIDED,
     val equalVariance: Boolean = false,
@@ -87,7 +97,10 @@ data class AnalysisRequest(
     val percentiles: String = "25,50,75",
     val histogramBins: String = "",
     val checkNormality: Boolean = false,
+    val independentNormality: NormalityBasis = NormalityBasis.RESIDUALS,
+    val anovaNormality: NormalityBasis = NormalityBasis.RESIDUALS,
     val checkVariances: Boolean = false,
+    val meanLeveneCenter: LeveneCenter = LeveneCenter.MEAN,
     val pairwiseComparisons: Boolean = false,
     val showBoxplot: Boolean = false,
     val showQQPlot: Boolean = false,
@@ -108,20 +121,29 @@ data class AnalysisRequest(
     val comparisonGroup: String = "",
     val eventCategory: String = "",
     val friedmanComparisons: Boolean = false,
-    val friedmanAdjustment: FriedmanAdjustment = FriedmanAdjustment.HOLM,
+    val friedmanAdjustment: FriedmanAdjustment = FriedmanAdjustment.NONE,
     val factors: List<Int> = emptyList(),
     val covariates: List<Int> = emptyList(),
     val factorInteractions: Boolean = true,
     val sumsOfSquares: SumsOfSquares = SumsOfSquares.III,
     val modelMarginalMeans: Boolean = true,
     val modelComparisons: Boolean = false,
-    val modelAdjustment: FriedmanAdjustment = FriedmanAdjustment.HOLM,
+    val modelAdjustment: ModelAdjustment = ModelAdjustment.TUKEY,
+    val modelComparisonFamily: ModelComparisonFamily = ModelComparisonFamily.PER_FACTOR,
     val checkSlopes: Boolean = false,
+    val modelHomogeneity: ModelHomogeneity = ModelHomogeneity.MODEL_RESIDUALS,
+    val modelQQBasis: ModelQQBasis = ModelQQBasis.STANDARDIZED,
     val factorCountMethod: FactorCountMethod = FactorCountMethod.PARALLEL,
+    val factorParallelMethod: FactorParallelMethod = FactorParallelMethod.COMMON_FACTOR,
+    val factorParallelSeed: String = "20261109",
     val factorCount: String = "1",
-    val factorEigenvalue: String = "1",
+    val factorEigenvalue: String = "0",
+    val factorEigenvalueBasis: EigenvalueBasis = EigenvalueBasis.COMMON_FACTOR,
     val factorExtraction: FactorExtraction = FactorExtraction.MINRES,
-    val factorRotation: FactorRotation = FactorRotation.VARIMAX,
+    val minresConvergence: MinresConvergence = MinresConvergence.REFERENCE,
+    val principalAxisConvergence: PrincipalAxisConvergence = PrincipalAxisConvergence.REFERENCE,
+    val factorRotation: FactorRotation = FactorRotation.OBLIMIN,
+    val varimaxConvergence: VarimaxConvergence = VarimaxConvergence.REFERENCE,
     val factorLoadingCutoff: String = "0.30",
     val factorSortLoadings: Boolean = false,
     val factorScreePlot: Boolean = false,

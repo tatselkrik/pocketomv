@@ -50,7 +50,8 @@ internal fun LicenseNotices(onDismiss: () -> Unit) {
                     Text("Licenses", style = MaterialTheme.typography.titleLarge)
                     ChoiceField("License text", selected, listOf("LICENSE.txt" to "pocketomv · MIT",
                         "third-party/NOTICE.txt" to "Third-party components and notices", "third-party/Apache-2.0.txt" to "Apache License 2.0",
-                        "third-party/scipy-LICENSE.txt" to "SciPy · BSD 3-Clause"), true) { selected = it }
+                        "third-party/scipy-LICENSE.txt" to "SciPy · BSD 3-Clause",
+                        "third-party/scipy-minpack2-LICENSE.txt" to "SciPy · More–Thuente line search"), true) { selected = it }
                     SelectionContainer(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
                         Text(text, style = MaterialTheme.typography.bodySmall)
                     }

@@ -9,7 +9,7 @@ import kotlin.math.sqrt
 
 internal data class RegressionCoefficient(val b: Double, val se: Double?, val beta: Double?, val t: Double?, val p: Double?, val lower: Double?, val upper: Double?)
 internal data class MultipleFit(val coefficients: List<RegressionCoefficient>, val rSquared: Double, val adjustedR: Double,
-    val f: Double, val p: Double, val df: Int, val rmse: Double, val vif: List<Double>,
+    val f: Double, val p: Double, val df: Int, val rmse: Double, val residualSE: Double, val vif: List<Double>,
     val fitted: DoubleArray, val residuals: DoubleArray, val residualZ: DoubleArray, val perfect: Boolean)
 
 internal object MultipleRegression {
@@ -65,7 +65,7 @@ internal object MultipleRegression {
         val residuals = DoubleArray(matrix.n) { y.sd * residual[it] * y.maximum }
         require(fitted.all(Double::isFinite) && residuals.all(Double::isFinite)) { "Predictions exceed the supported range. Rescale the outcome." }
         return MultipleFit(coefficients, r2, 1 - (1 - r2) * (matrix.n - 1) / df, f, p, df,
-            scaled(sqrt(mse), y), inverse.indices.map { ((matrix.n - 1) * inverse[it][it]).coerceAtLeast(1.0) },
+            scaled(sqrt(sse / matrix.n), y), scaled(sqrt(mse), y), inverse.indices.map { ((matrix.n - 1) * inverse[it][it]).coerceAtLeast(1.0) },
             fitted, residuals, residual, perfect)
     }
 
@@ -77,7 +77,7 @@ internal object MultipleRegression {
         val tables = listOf(AnalysisTable("Model fit", listOf("Measure", "Value"), listOf(
             listOf("Complete observations", matrix.n.toString()), listOf("Predictors", request.predictors.size.toString()),
             listOf("R²", formatStatistic(fit.rSquared)), listOf("Adjusted R²", formatStatistic(fit.adjustedR)),
-            listOf("Residual RMSE", formatStatistic(fit.rmse)),
+            listOf("RMSE", formatStatistic(fit.rmse)), listOf("Residual standard error", formatStatistic(fit.residualSE)),
         )), AnalysisTable("Regression coefficients", listOf("Term", "B", "SE", "Standardized β", "t", "df", "p", "95% CI"),
             fit.coefficients.mapIndexed { i, c -> listOf(if (i == 0) "Intercept" else matrix.labels[i],
                 value(c.b), value(c.se), value(c.beta), value(c.t), fit.df.toString(), c.p?.let(::formatProbability) ?: "—",
@@ -86,7 +86,7 @@ internal object MultipleRegression {
                 listOf(matrix.labels[i + 1], formatStatistic(vif), formatStatistic(1 / vif))
             }))
         val plots = if (request.showQQPlot || request.showScatterplot) AnalysisPlots(
-            qq = if (request.showQQPlot) listOf(PlotCalculator.qq("Model residuals", fit.residuals)) else emptyList(),
+            qq = if (request.showQQPlot) listOf(normalQQ(fit)) else emptyList(),
             scatter = if (request.showScatterplot) ScatterPlot("Fitted ${matrix.labels.first()}", "Residual",
                 fit.fitted.indices.map { PlotPoint(fit.fitted[it], fit.residuals[it]) }, null) else null,
         ) else null
@@ -95,10 +95,25 @@ internal object MultipleRegression {
             assumptionChecks = if (request.checkNormality) listOf(MeanDiagnostics.normality("Model residuals", fit.residualZ)) else emptyList(),
             notes = buildList {
                 add("Uses complete cases across the outcome and all selected predictors. Coefficient tests are two-sided; intervals are 95% t intervals.")
+                add("RMSE divides residual sum of squares by N. Residual standard error divides by residual degrees of freedom (N − predictors − 1), also used for coefficient inference.")
                 add("Predictors enter together. Numeric predictors are treated as quantitative; code categorical predictors into appropriate indicators with a reference category first.")
                 add("Residual graphs and Shapiro–Wilk are diagnostics. They do not establish linearity, equal error variance, independence or causal effects. Inspect study design and influential observations.")
                 add("VIF quantifies predictor collinearity. Redundant or numerically indistinguishable predictors are rejected instead of being silently removed.")
                 if (fit.perfect) add("A numerically perfect fit has no usable residual variation. Coefficient tests and intervals are unavailable; the model F is infinite.")
             })
+    }
+
+    private fun normalQQ(fit: MultipleFit): NormalQQPlot {
+        val label = "Sample-standardized model residuals"
+        val detail = "Residuals are centered and divided by their sample standard deviation (N − 1), without a leverage adjustment."
+        // Use proportional residuals to avoid overflow/underflow from the outcome's units.
+        // This is sample standardization, not residual-SE or leverage standardization.
+        val standardized = MatrixMath.standardize(fit.residualZ)
+        if (fit.perfect || standardized.sd <= 0.0 || !standardized.sd.isFinite()) {
+            return NormalQQPlot(label, fit.residualZ.size, emptyList(), Double.NaN, Double.NaN, null,
+                "The model residuals have no usable variation; a standardized Q–Q plot is unavailable.",
+                identityReference = true, detail = detail)
+        }
+        return PlotCalculator.qq(label, standardized.z, identityReference = true).copy(detail = detail)
     }
 }

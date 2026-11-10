@@ -60,11 +60,11 @@ internal object CorrelationMatrices {
                 else "Pairwise deletion uses available rows separately for each pair. Included rows have at least one selected value; each cell's N is the relevant sample size. Pairwise matrices need not be positive semidefinite.")
             add("P-values are two-sided and unadjusted for multiple correlations. A correlation does not establish causation. Self-correlations have no p-value or confidence interval.")
             add(if (request.correlationKind == CorrelationKind.SPEARMAN)
-                "Spearman correlations use average ranks, recalculated within each pair's included rows. P-values use the labeled t approximation, including small samples. Spearman confidence intervals are not provided."
+                "Spearman correlations use average ranks, recalculated within each pair's included rows. P-values use exact permutations for untied N ≤ 9, AS 89 for untied N = 10–1,290, and a t approximation for ties or larger samples. Spearman confidence intervals are not provided."
                 else "Pearson p-values use a t test with N − 2 degrees of freedom under the usual Pearson assumptions.")
             if (request.correlationConfidence && request.correlationKind == CorrelationKind.PEARSON)
                 add("Pearson 95% confidence intervals use Fisher's z transformation and require N ≥ 4; their approximation assumes independent observations from a bivariate normal population. At a computed correlation of ±1 the interval collapses to that endpoint.")
-            add("A coefficient needs at least two complete observations and variation in both variables; a p-value needs at least three. Undefined cells are shown as — and explained in pair details.")
+            add("A coefficient needs at least two complete observations and variation in both variables; ${if (request.correlationKind == CorrelationKind.SPEARMAN) "Spearman inference also supports two pairs" else "Pearson inference needs at least three pairs"}. Undefined cells are shown as — and explained in pair details.")
         }
         return AnalysisResult(AnalysisMethod.CORRELATION_MATRIX, "${request.correlationKind.label} correlation matrix", test = null,
             includedCases = included.toLong(), excludedRows = data.rows.size - included, correlations = matrix,
@@ -77,7 +77,7 @@ internal object CorrelationMatrices {
         if (x.all { it == x[0] } || y.all { it == y[0] })
             return CorrelationCell(n, null, null, note = "A variable is constant in these complete observations.")
         val r = Statistics.correlationCoefficient(x, y, kind == CorrelationKind.SPEARMAN)
-        val p = if (n < 3) null else {
+        val p = if (kind == CorrelationKind.SPEARMAN) SpearmanProbability.calculate(x, y, r, Tail.TWO_SIDED).p else if (n < 3) null else {
             val t = if (abs(r) == 1.0) Double.POSITIVE_INFINITY else r * sqrt((n - 2.0) / ((1.0 - r) * (1.0 + r)))
             Statistics.tProbability(t, n - 2.0, Tail.TWO_SIDED)
         }
@@ -89,7 +89,7 @@ internal object CorrelationMatrices {
             }
         } else null
         val note = when {
-            n < 3 -> "P-value needs at least three complete observations."
+            n < 3 && kind == CorrelationKind.PEARSON -> "P-value needs at least three complete observations."
             confidence && kind == CorrelationKind.PEARSON && n < 4 -> "Fisher z interval needs at least four complete observations."
             else -> null
         }

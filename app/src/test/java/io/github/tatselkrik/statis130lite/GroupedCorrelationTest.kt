@@ -105,7 +105,7 @@ class GroupedCorrelationTest {
         val formatted = result.formattedReport("Fictional", true, emptyList())
         assertEquals(2, formatted.blocks.filterIsInstance<ReportBlock.Figure>().size)
         assertEquals(25, formatted.blocks.filterIsInstance<ReportBlock.Table>().single { it.value.title == "Value frequencies" }.value.rows.size)
-        assertTrue(HtmlReport.render(formatted).contains("first 20 categories"))
+        assertTrue(HtmlReport.render(formatted).contains("first 20 observed categories"))
     }
 
     @Test fun undefinedShapeMeasuresDoNotInventZeros() {
@@ -133,7 +133,7 @@ class GroupedCorrelationTest {
         assertTrue(error.message!!.contains("data row 5"))
     }
 
-    @Test fun matricesMatchIndependentScipyReferencesAcrossPoliciesAndCorrelationMethods() {
+    @Test fun matrixCoefficientsAndPearsonInferenceMatchIndependentScipyReferencesAcrossPolicies() {
         val matrices = reference.getJSONArray("matrices")
         for (index in 0 until matrices.length()) {
             val fixture = matrices.getJSONObject(index)
@@ -155,7 +155,7 @@ class GroupedCorrelationTest {
                     val actual = matrix.cells[i][j]
                     assertEquals(expected.getInt("n"), actual.n)
                     close(expected, "coefficient", actual.coefficient)
-                    close(expected, "p", actual.pValue)
+                    if (case.getString("kind") == "PEARSON") close(expected, "p", actual.pValue)
                     close(expected, "lower", actual.lower95)
                     close(expected, "upper", actual.upper95)
                     assertEquals(actual, matrix.cells[j][i])

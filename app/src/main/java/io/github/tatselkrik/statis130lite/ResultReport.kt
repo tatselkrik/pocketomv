@@ -13,10 +13,14 @@ fun formatStatistic(value: Double): String = when {
 }
 
 fun formatProbability(value: Double): String =
-    if (value < 0.001) "< .001" else String.format(Locale.US, "%.3f", value)
+    if (!value.isFinite()) "—" else if (value < 0.001) "< .001" else String.format(Locale.US, "%.3f", value)
 
-fun Estimate.confidenceInterval(): String =
-    if (lower95 != null && upper95 != null) "[${formatStatistic(lower95)}, ${formatStatistic(upper95)}]" else "—"
+fun Estimate.confidenceInterval(): String {
+    if (lower95 == null || upper95 == null) return "—"
+    val left = if (lower95 == Double.NEGATIVE_INFINITY) "(" else "["
+    val right = if (upper95 == Double.POSITIVE_INFINITY) ")" else "]"
+    return "$left${formatStatistic(lower95)}, ${formatStatistic(upper95)}$right"
+}
 
 fun AnalysisResult.asReport(source: String, fictional: Boolean, preparationNotes: List<String> = emptyList()): String = buildString {
     appendLine("pocketomv")
@@ -63,9 +67,10 @@ fun AnalysisResult.asReport(source: String, fictional: Boolean, preparationNotes
         }
         appendLine()
         appendLine("Value frequencies (non-missing observations)")
-        appendLine("Value\tCount\tPercent")
-        summary.frequencies.forEach { appendLine("${reportCell(it.value)}\t${it.count}\t${formatStatistic(it.percent)}") }
-        if (summary.showBarChart) appendLine("Bar chart: category counts, first 20 labels; the frequency table retains every category.")
+        val frequencyTable = summary.frequencyTable()
+        appendLine(frequencyTable.headers.joinToString("\t"))
+        frequencyTable.rows.forEach { appendLine(it.joinToString("\t", transform = ::reportCell)) }
+        if (summary.showBarChart && summary.validCount > 0) appendLine("Bar chart: category counts, first 20 observed labels; the frequency table retains every observed category.")
         summary.notes.forEach { appendLine(it) }
     }
     if (estimates.isNotEmpty()) {
@@ -131,12 +136,16 @@ fun AnalysisResult.asReport(source: String, fictional: Boolean, preparationNotes
             plots.boxes.forEach { box -> appendLine(box.displayRow().joinToString("\t") { reportCell(it) }) }
         }
         if (plots.qq.isNotEmpty()) {
-            appendLine("Normal Q–Q: R ppoints positions; reference line through R type 7 Q1 and Q3. A graph alone does not establish normality.")
+            val references = plots.qq.map { if (it.identityReference) "identity reference line (y = x)" else "reference line through R type 7 Q1 and Q3" }.distinct().joinToString("; ")
+            appendLine("Normal Q–Q: R ppoints positions; $references. A graph alone does not establish normality.")
             appendLine("Sample\tN\tQ1\tQ3\tStatus")
-            plots.qq.forEach { plot -> appendLine(listOf(plot.label, plot.size.toString(), formatStatistic(plot.q1),
+            plots.qq.forEach { plot ->
+                appendLine(listOf(plot.label, plot.size.toString(), formatStatistic(plot.q1),
                 formatStatistic(plot.q3), plot.unavailable ?: if (plot.points.first().y == plot.points.last().y)
                     "Constant values; normality cannot be assessed" else "Available in app")
-                .joinToString("\t") { reportCell(it) }) }
+                    .joinToString("\t") { reportCell(it) })
+                plot.detail?.let { appendLine(reportCell(it)) }
+            }
         }
         plots.scatter?.let { scatter ->
             appendLine("Scatterplot: X = ${reportCell(scatter.xLabel)}; Y = ${reportCell(scatter.yLabel)}; ${scatter.points.size} complete pairs, original values.")
@@ -161,7 +170,16 @@ fun AnalysisResult.asReport(source: String, fictional: Boolean, preparationNotes
     }
 }
 
-internal fun DescriptiveSummary.summaryRows(modeLimit: Int = Int.MAX_VALUE): List<List<String>> = buildList {
+internal fun DescriptiveSummary.frequencyTable(title: String = "Value frequencies", limit: Int = Int.MAX_VALUE): AnalysisTable {
+    val grouped = frequencyPooledN != null
+    return AnalysisTable(title, listOf("Value", "Count", if (grouped) "Percent (pooled)" else "Percent") +
+        if (grouped) listOf("Percent within group") else emptyList(), frequencies.take(limit).map {
+        listOf(it.value, it.count.toString(), formatStatistic(it.percent)) +
+            if (grouped) listOf(it.withinGroupPercent?.let(::formatStatistic) ?: "—") else emptyList()
+    })
+}
+
+internal fun DescriptiveSummary.summaryRows(modeLimit: Int = 100): List<List<String>> = buildList {
     add(listOf("Valid N", validCount.toString()))
     add(listOf("Missing", missingCount.toString()))
     numeric?.let { values ->
@@ -169,11 +187,9 @@ internal fun DescriptiveSummary.summaryRows(modeLimit: Int = Int.MAX_VALUE): Lis
         values.weightedMean?.let { add(listOf("Weighted mean", formatStatistic(it.value))) }
         add(listOf("Median", formatStatistic(values.median)))
     }
-    val mode = if (validCount == 0) "— (no non-missing observations)" else if (modes.isEmpty()) {
-        if (modeCount == 1) "None (each value occurs once)" else "None (all values have equal frequency)"
-    } else modes.take(modeLimit).joinToString(", ") +
-        if (modes.size > modeLimit) " (${modes.size - modeLimit} more; see report)" else ""
-    add(listOf("Mode", mode))
+    add(listOf("Mode", mode ?: "— (no non-missing observations)"))
+    if (modes.size > 1) add(listOf("Tied modes", modes.take(modeLimit).joinToString(", ") +
+        if (modes.size > modeLimit) " (${modes.size - modeLimit} more; see full frequency table)" else ""))
     if (modes.isNotEmpty()) add(listOf("Mode frequency", modeCount.toString()))
     numeric?.let { values ->
         val basis = if (values.population) "population" else "sample"

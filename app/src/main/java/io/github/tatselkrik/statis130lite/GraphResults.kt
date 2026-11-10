@@ -49,10 +49,14 @@ internal fun PlotOptions(request: AnalysisRequest, enabled: Boolean, onChange: (
             CheckOption("Normal Q–Q plot", request.showQQPlot, enabled) { onChange(request.copy(showQQPlot = it)) }
             Text(when (request.method) {
                 AnalysisMethod.PAIRED_T -> "Q–Q plots use the differences within complete pairs."
-                AnalysisMethod.MULTIPLE_REGRESSION, AnalysisMethod.FACTORIAL_ANOVA, AnalysisMethod.ANCOVA -> "Q–Q plots use model residuals."
+                AnalysisMethod.MULTIPLE_REGRESSION -> "Q–Q plots use sample-standardized model residuals and an identity line."
+                AnalysisMethod.FACTORIAL_ANOVA, AnalysisMethod.ANCOVA -> if (request.modelQQBasis == ModelQQBasis.STANDARDIZED)
+                    "Q–Q plots use standardized model residuals and an identity line." else "Q–Q plots use raw model residuals and a quartile line."
                 AnalysisMethod.INDEPENDENT_T, AnalysisMethod.ANOVA -> "Q–Q plots are available separately for each group."
                 else -> "Compare the sample's distribution with normal quantiles."
             }, style = MaterialTheme.typography.bodySmall)
+            if (request.showQQPlot && request.method.isFactorialModel) ChoiceField("Q–Q residual basis", request.modelQQBasis,
+                ModelQQBasis.entries.map { it to it.label }, enabled) { onChange(request.copy(modelQQBasis = it)) }
         }
         if (request.method.supportsScatterplot) {
             CheckOption(if (request.method.usesResiduals) "Residuals vs fitted" else "Scatterplot", request.showScatterplot, enabled) { onChange(request.copy(showScatterplot = it)) }
@@ -78,13 +82,14 @@ internal fun LazyListScope.graphItems(result: AnalysisResult, selectedQQ: String
             Text("${plot.label} · N = ${plot.size}", style = MaterialTheme.typography.bodyMedium)
             if (plot.unavailable != null) Text(plot.unavailable) else {
                 PointsChart(plot.points, "Theoretical normal quantiles", "Observed values", plot.reference,
-                    "Normal Q–Q plot for ${plot.label}, ${plot.size} observations. Reference line passes through the first and third quartiles.")
-                Text("Line through Q1 and Q3. A roughly straight pattern supports normality; a graph alone does not establish it.",
+                    "Normal Q–Q plot for ${plot.label}, ${plot.size} observations. ${plot.referenceLabel}.")
+                Text("${plot.referenceLabel}. A roughly straight pattern supports normality; a graph alone does not establish it.",
                     style = MaterialTheme.typography.bodySmall)
                 Text("Q1 = ${formatStatistic(plot.q1)} · Q3 = ${formatStatistic(plot.q3)}", style = MaterialTheme.typography.bodySmall)
                 if (plot.points.first().y == plot.points.last().y) Text("All values are equal; normality cannot be assessed.",
                     style = MaterialTheme.typography.bodySmall)
             }
+            plot.detail?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         }
     }
     plots.scatter?.let { scatter -> item {
@@ -106,18 +111,20 @@ private fun ScreeChart(plot: ScreePlot) {
     val comparison = MaterialTheme.colorScheme.tertiary
     val axis = MaterialTheme.colorScheme.outline
     val plotHeight = graphHeight()
-    val y = PlotAxis(0.0, (plot.observed + plot.parallel95).max().coerceAtLeast(1.0))
+    val values = plot.observed + plot.parallel95
+    val y = PlotAxis(values.min().coerceAtMost(0.0), values.max().coerceAtLeast(1.0))
     GraphCard("Scree plot") {
-        Text("Correlation eigenvalues", style = MaterialTheme.typography.labelMedium)
+        Text(plot.basis.label, style = MaterialTheme.typography.labelMedium)
         Row(Modifier.fillMaxWidth()) {
             AxisLabels(y, Modifier.width(88.dp).height(plotHeight).padding(end = 8.dp))
             Canvas(Modifier.weight(1f).height(plotHeight).semantics {
-                contentDescription = "Scree plot of ${plot.observed.size} observed correlation eigenvalues" +
+                contentDescription = "Scree plot of ${plot.observed.size} observed ${plot.basis.label.lowercase()}" +
                     if (plot.parallel95.isNotEmpty()) " and parallel-analysis 95th-percentile thresholds. Exact values are in the eigenvalue table." else ". Exact values are in the eigenvalue table."
             }) {
                 val left = 6.dp.toPx(); val right = size.width - 6.dp.toPx()
                 val top = 6.dp.toPx(); val bottom = size.height - 6.dp.toPx()
                 for (fraction in listOf(0f, 0.5f, 1f)) drawLine(axis.copy(alpha = 0.3f), Offset(left, bottom - (bottom - top) * fraction), Offset(right, bottom - (bottom - top) * fraction))
+                if (y.minimum < 0) drawLine(axis, Offset(left, bottom - (bottom - top) * y.fraction(0.0).toFloat()), Offset(right, bottom - (bottom - top) * y.fraction(0.0).toFloat()))
                 fun curve(values: List<Double>, color: Color, squares: Boolean) {
                     val points = values.mapIndexed { i, value -> Offset(left + (right - left) * i / (plot.observed.size - 1), bottom - (bottom - top) * y.fraction(value).toFloat()) }
                     points.zipWithNext().forEach { (a, b) -> drawLine(color, a, b, 2.dp.toPx()) }
@@ -161,9 +168,6 @@ private fun AxisLabels(axis: PlotAxis, modifier: Modifier = Modifier) {
         ticks.forEach { Text(axis.label(it), style = MaterialTheme.typography.labelSmall) }
     }
 }
-
-private fun PlotAxis.label(value: Double): String =
-    if (minimum != maximum && formatStatistic(minimum) == formatStatistic(maximum)) value.toString() else formatStatistic(value)
 
 @Composable
 private fun PointsChart(points: List<PlotPoint>, xLabel: String, yLabel: String, line: PlotLine?, description: String) {

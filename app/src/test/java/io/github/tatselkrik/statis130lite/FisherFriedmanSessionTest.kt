@@ -27,7 +27,7 @@ class FisherFriedmanSessionTest {
 
     @Test fun sessionsBeforeTheseFeaturesRetainTheirExistingMeanAndCorrelationSettings() {
         for (method in listOf(AnalysisMethod.DESCRIPTIVES,AnalysisMethod.CORRELATION_MATRIX,AnalysisMethod.REPEATED_ANOVA)) {
-            val state=screen(method)
+            val state=screen(method).let { it.copy(request=it.request.copy(friedmanAdjustment=FriedmanAdjustment.HOLM)) }
             val json=JSONObject(SessionCodec.encode(SavedSession.capture(state,null)).toString(Charsets.UTF_8))
             val options=json.getJSONObject("request")
             listOf("comparisonGroup","eventCategory","friedmanComparisons","friedmanAdjustment").forEach(options::remove)
@@ -86,7 +86,7 @@ class FisherFriedmanSessionTest {
             }
             if (method==AnalysisMethod.FISHER_EXACT) {
                 assertTrue(html.contains("B versus A"));assertTrue(html.contains("event: Other"))
-                assertTrue(plain.contains("95% CI"));assertTrue(html.contains("Log-Wald"))
+                assertTrue(plain.contains("95% CI"));assertTrue(html.contains("log-Wald",ignoreCase=true))
             } else {
                 assertTrue(html.contains("Condition mean ranks"));assertTrue(html.contains("Bonferroni p"))
                 assertTrue(plain.contains("Kendall's W"))

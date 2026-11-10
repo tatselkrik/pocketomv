@@ -29,14 +29,14 @@ internal object ReportCharts {
         add(ChartMark.Text(8.0, 20.0, label(yLabel, 45)))
         for (fraction in listOf(0.0, 0.5, 1.0)) add(ChartMark.Line(LEFT, py(fraction), RIGHT, py(fraction), "#d3dfda", 0.8))
         add(ChartMark.Line(LEFT, TOP, LEFT, BOTTOM, "#556b62", 1.0))
-        if (y.minimum == y.maximum) add(ChartMark.Text(8.0, py(0.5) + 4, formatStatistic(y.minimum))) else {
-            add(ChartMark.Text(8.0, TOP + 4, formatStatistic(y.maximum)))
-            add(ChartMark.Text(8.0, py(0.5) + 4, formatStatistic(y.midpoint)))
-            add(ChartMark.Text(8.0, BOTTOM + 4, formatStatistic(y.minimum)))
+        if (y.minimum == y.maximum) add(ChartMark.Text(8.0, py(0.5) + 4, y.label(y.minimum))) else {
+            add(ChartMark.Text(8.0, TOP + 4, y.label(y.maximum)))
+            add(ChartMark.Text(8.0, py(0.5) + 4, y.label(y.midpoint)))
+            add(ChartMark.Text(8.0, BOTTOM + 4, y.label(y.minimum)))
         }
         if (x != null) {
             val values = if (x.minimum == x.maximum) listOf(0.5 to x.minimum) else listOf(0.0 to x.minimum, 0.5 to x.midpoint, 1.0 to x.maximum)
-            values.forEach { (fraction, value) -> add(ChartMark.Text(px(fraction), BOTTOM + 20, formatStatistic(value), anchor = if (fraction == 0.0) "start" else if (fraction == 1.0) "end" else "middle")) }
+            values.forEach { (fraction, value) -> add(ChartMark.Text(px(fraction), BOTTOM + 20, x.label(value), anchor = if (fraction == 0.0) "start" else if (fraction == 1.0) "end" else "middle")) }
             add(ChartMark.Text((LEFT + RIGHT) / 2, 325.0, label(xLabel, 45), anchor = "middle"))
         }
     }
@@ -73,8 +73,10 @@ internal object ReportCharts {
 
     fun scree(plot: ScreePlot): ChartScene {
         val marks = mutableListOf<ChartMark>()
-        val y = PlotAxis(0.0, (plot.observed + plot.parallel95).max().coerceAtLeast(1.0))
-        marks.axes(y, "Correlation eigenvalue", PlotAxis(1.0, plot.observed.size.toDouble()), "Eigenvalue order")
+        val values = plot.observed + plot.parallel95
+        val y = PlotAxis(values.min().coerceAtMost(0.0), values.max().coerceAtLeast(1.0))
+        marks.axes(y, if (plot.basis == EigenvalueBasis.COMMON_FACTOR) "Common-factor eigenvalue" else "Correlation eigenvalue", PlotAxis(1.0, plot.observed.size.toDouble()), "Eigenvalue order")
+        if (y.minimum < 0) marks.add(ChartMark.Line(LEFT, py(y.fraction(0.0)), RIGHT, py(y.fraction(0.0)), "#8ca39a", 0.8))
         fun curve(values: List<Double>, color: String) {
             val points = values.mapIndexed { i, value -> px(i.toDouble() / (plot.observed.size - 1)) to py(y.fraction(value)) }
             points.zipWithNext().forEach { (a, b) -> marks.add(ChartMark.Line(a.first, a.second, b.first, b.second, color, 2.0)) }

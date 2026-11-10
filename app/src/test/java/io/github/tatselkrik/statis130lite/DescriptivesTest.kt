@@ -129,8 +129,9 @@ class DescriptivesTest {
         val multiple = Statistics.run(parseDelimited("X\n1\n1\n2\n2\n3"), request).descriptives!!
         assertEquals(listOf("1", "2"), multiple.modes)
         val unique = Statistics.run(parseDelimited("X\n1\n2\n3"), request)
-        assertTrue(unique.descriptives!!.modes.isEmpty())
-        assertTrue(unique.asReport("Practice", true).contains("None (each value occurs once)"))
+        assertEquals(listOf("1","2","3"),unique.descriptives!!.modes)
+        assertEquals("1",unique.descriptives.mode)
+        assertTrue(unique.asReport("Practice", true).contains("Tied modes"))
     }
 
     @Test fun categoricalSummariesPreserveLabelsWithoutInventingNumericStatistics() {
@@ -147,11 +148,12 @@ class DescriptivesTest {
         assertFalse(result.asReport("Practice", true).contains("Variance"))
     }
 
-    @Test fun aUniformFrequencyDistributionUsesTheLectureNoModeConvention() {
+    @Test fun aUniformFrequencyDistributionUsesTheFirstSortedModeAndRetainsAllTies() {
         val result = Statistics.run(parseDelimited("X\n1\n1\n2\n2"), request)
-        assertTrue(result.descriptives!!.modes.isEmpty())
-        assertTrue(result.asReport("Practice", true).contains("None (all values have equal frequency)"))
-        assertTrue(result.notes.any { it.contains("introductory-course convention") })
+        assertEquals(listOf("1","2"),result.descriptives!!.modes)
+        assertEquals("1",result.descriptives.mode)
+        assertTrue(result.asReport("Practice", true).contains("Tied modes"))
+        assertTrue(result.notes.any { it.contains("jamovi's numeric mode convention") })
     }
 
     @Test fun missingMarkersAreExcludedAndBadNumericDataIsNotSilentlyAccepted() {

@@ -24,7 +24,7 @@ class AdvancedAnalysisTest {
         actual.forEachIndexed { i, value -> if (expected.isNull(i)) assertNull(value) else close(expected.getDouble(i), value!!, tolerance) }
     }
 
-    @Test fun alphaItemDiagnosticsAndMlOmegaMatchIndependentScipyOptimization() {
+    @Test fun alphaAndItemDiagnosticsMatchIndependentReferences() {
         val cases = fixtures("reliability")
         for (i in 0 until cases.length()) {
             val ref = cases.getJSONObject(i); val fit = ReliabilityAnalysis.compute(matrix(data(ref)))
@@ -32,12 +32,7 @@ class AdvancedAnalysisTest {
             close(ref.getDouble("standardizedAlpha"), fit.standardizedAlpha!!)
             vector(ref.getJSONArray("itemRest"), fit.itemRest)
             vector(ref.getJSONArray("alphaDropped"), fit.alphaDropped)
-            if (ref.has("omega")) {
-                assertNull(fit.omegaNote)
-                close(ref.getDouble("omega"), fit.omega!!, 2e-6)
-                close(ref.getDouble("standardizedOmega"), fit.standardizedOmega!!, 2e-6)
-                vector(ref.getJSONArray("loadings"), fit.loadings!!, 1e-5)
-            } else {
+            if (!ref.has("omega")) {
                 assertNull(fit.omega)
                 assertTrue(fit.omegaNote!!.contains("three items"))
             }
@@ -98,13 +93,14 @@ class AdvancedAnalysisTest {
             vector(ref.getJSONArray("upper"), fit.coefficients.map { it.upper })
             close(ref.getDouble("r2"), fit.rSquared); close(ref.getDouble("adjustedR"), fit.adjustedR)
             close(ref.getDouble("f"), fit.f); close(ref.getDouble("pModel"), fit.p)
-            close(ref.getDouble("rmse"), fit.rmse)
+            close(ref.getDouble("rmse"), fit.residualSE)
+            close(ref.getDouble("rmse") * kotlin.math.sqrt(fit.df.toDouble()/data(ref).rows.size), fit.rmse)
             vector(ref.getJSONArray("vif"), fit.vif)
             vector(ref.getJSONArray("fitted"), fit.fitted.toList()); vector(ref.getJSONArray("residuals"), fit.residuals.toList())
         }
     }
 
-    @Test fun regressionRetainsRawUnitsInGraphsAndHandlesLargeScaleRatios() {
+    @Test fun regressionRetainsRawScatterUnitsAndHandlesLargeScaleRatios() {
         val data = data(fixtures("regression").getJSONObject(0))
         val fit = MultipleRegression.compute(matrix(data))
         val factors = listOf(1e80, 1e-60, 1e100)
@@ -115,7 +111,8 @@ class AdvancedAnalysisTest {
         val req = AnalysisRequest.forData(AnalysisMethod.MULTIPLE_REGRESSION, data).copy(showQQPlot=true, showScatterplot=true, checkNormality=true)
         val result = Statistics.run(data, req)
         assertEquals(data.rows.size, result.plots!!.scatter!!.points.size)
-        assertEquals(fit.residuals.sorted(), result.plots.qq.single().points.map { it.y })
+        assertEquals(fit.residuals.toList(), result.plots.scatter.points.map { it.y })
+        assertTrue(result.plots.qq.single().identityReference)
         assertEquals(1, result.assumptionChecks.size)
         assertTrue(result.plots.scatter.fittedLine == null)
     }

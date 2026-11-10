@@ -126,10 +126,10 @@ private fun DescriptiveDetail(summary: DescriptiveSummary) {
                 })
         }
     }
-    if (summary.showBarChart && summary.frequencies.isNotEmpty()) CategoryBarChart(summary)
+    if (summary.showBarChart && summary.validCount > 0 && summary.frequencies.isNotEmpty()) CategoryBarChart(summary)
     run {
-        TitledTable("Value frequencies", listOf("Value", "Count", "Percent"),
-            summary.frequencies.take(100).map { listOf(it.value, it.count.toString(), formatStatistic(it.percent)) })
+        val table = summary.frequencyTable(limit = 100)
+        TitledTable(table.title, table.headers, table.rows)
         if (summary.frequencies.size > 100) {
             Text("Showing the first 100 of ${summary.frequencies.size} values. Copy or save the report for the full frequency table.",
                 style = MaterialTheme.typography.bodySmall)
@@ -140,13 +140,14 @@ private fun DescriptiveDetail(summary: DescriptiveSummary) {
 
 @Composable
 private fun CategoryBarChart(summary: DescriptiveSummary) {
+    val observed = summary.frequencies.filter { it.count > 0 }
     val maximum = summary.frequencies.maxOf { it.count }.coerceAtLeast(1)
     val fill = MaterialTheme.colorScheme.primary
     Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
         Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Bar chart · ${summary.label}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text("Frequency · common scale 0–$maximum", style = MaterialTheme.typography.labelMedium)
-            summary.frequencies.take(20).forEach { value ->
+            observed.take(20).forEach { value ->
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(value.value, style = MaterialTheme.typography.bodySmall)
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -157,7 +158,7 @@ private fun CategoryBarChart(summary: DescriptiveSummary) {
                     }
                 }
             }
-            if (summary.frequencies.size > 20) Text("Chart shows the first 20 categories in label order. The frequency table and reports retain every category.", style = MaterialTheme.typography.bodySmall)
+            if (observed.size > 20) Text("Chart shows the first 20 observed categories in label order. The frequency table and reports retain every observed category.", style = MaterialTheme.typography.bodySmall)
         }
     }
 }

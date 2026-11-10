@@ -59,6 +59,7 @@ internal object SessionCodec {
                 .put("first", request.first)
                 .put("second", request.second)
                 .put("count", request.count ?: JSONObject.NULL)
+                .put("countMissingPolicy", request.countMissingPolicy.name)
                 .put("reference", request.reference)
                 .put("tail", request.tail.name)
                 .put("equalVariance", request.equalVariance)
@@ -70,7 +71,10 @@ internal object SessionCodec {
             .put("percentiles", request.percentiles)
             .put("histogramBins", request.histogramBins)
             .put("checkNormality", request.checkNormality)
+            .put("independentNormality", request.independentNormality.name)
+            .put("anovaNormality", request.anovaNormality.name)
             .put("checkVariances", request.checkVariances)
+            .put("meanLeveneCenter", request.meanLeveneCenter.name)
             .put("pairwiseComparisons", request.pairwiseComparisons)
             .put("showBoxplot", request.showBoxplot)
             .put("showQQPlot", request.showQQPlot)
@@ -99,12 +103,21 @@ internal object SessionCodec {
             .put("modelMarginalMeans", request.modelMarginalMeans)
             .put("modelComparisons", request.modelComparisons)
             .put("modelAdjustment", request.modelAdjustment.name)
+            .put("modelComparisonFamily", request.modelComparisonFamily.name)
             .put("checkSlopes", request.checkSlopes)
+            .put("modelHomogeneity", request.modelHomogeneity.name)
+            .put("modelQQBasis", request.modelQQBasis.name)
             .put("factorCountMethod", request.factorCountMethod.name)
+            .put("factorParallelMethod", request.factorParallelMethod.name)
+            .put("factorParallelSeed", request.factorParallelSeed)
             .put("factorCount", request.factorCount)
             .put("factorEigenvalue", request.factorEigenvalue)
+            .put("factorEigenvalueBasis", request.factorEigenvalueBasis.name)
             .put("factorExtraction", request.factorExtraction.name)
+            .put("minresConvergence", request.minresConvergence.name)
+            .put("principalAxisConvergence", request.principalAxisConvergence.name)
             .put("factorRotation", request.factorRotation.name)
+            .put("varimaxConvergence", request.varimaxConvergence.name)
             .put("factorLoadingCutoff", request.factorLoadingCutoff)
             .put("factorSortLoadings", request.factorSortLoadings)
             .put("factorScreePlot", request.factorScreePlot)
@@ -165,6 +178,7 @@ internal object SessionCodec {
                 first = request.integer("first"),
                 second = request.integer("second"),
                 count = if (request.isNull("count")) null else request.integer("count"),
+                countMissingPolicy = if (request.has("countMissingPolicy")) CountMissingPolicy.valueOf(request.text("countMissingPolicy")) else CountMissingPolicy.OMIT,
                 reference = request.text("reference"),
                 tail = Tail.valueOf(request.text("tail")),
                 equalVariance = request.flag("equalVariance"),
@@ -175,7 +189,10 @@ internal object SessionCodec {
                 percentiles = if (request.has("percentiles")) request.text("percentiles") else "25,50,75",
                 histogramBins = if (request.has("histogramBins")) request.text("histogramBins") else "",
                 checkNormality = if (request.has("checkNormality")) request.flag("checkNormality") else false,
+                independentNormality = if (request.has("independentNormality")) NormalityBasis.valueOf(request.text("independentNormality")) else NormalityBasis.GROUPS,
+                anovaNormality = if (request.has("anovaNormality")) NormalityBasis.valueOf(request.text("anovaNormality")) else NormalityBasis.GROUPS,
                 checkVariances = if (request.has("checkVariances")) request.flag("checkVariances") else false,
+                meanLeveneCenter = if (request.has("meanLeveneCenter")) LeveneCenter.valueOf(request.text("meanLeveneCenter")) else LeveneCenter.MEDIAN,
                 pairwiseComparisons = if (request.has("pairwiseComparisons")) request.flag("pairwiseComparisons") else false,
                 showBoxplot = if (request.has("showBoxplot")) request.flag("showBoxplot") else false,
                 showQQPlot = if (request.has("showQQPlot")) request.flag("showQQPlot") else false,
@@ -203,13 +220,22 @@ internal object SessionCodec {
                 sumsOfSquares = if (request.has("sumsOfSquares")) SumsOfSquares.valueOf(request.text("sumsOfSquares")) else SumsOfSquares.III,
                 modelMarginalMeans = if (request.has("modelMarginalMeans")) request.flag("modelMarginalMeans") else true,
                 modelComparisons = if (request.has("modelComparisons")) request.flag("modelComparisons") else false,
-                modelAdjustment = if (request.has("modelAdjustment")) FriedmanAdjustment.valueOf(request.text("modelAdjustment")) else FriedmanAdjustment.HOLM,
+                modelAdjustment = if (request.has("modelAdjustment")) ModelAdjustment.valueOf(request.text("modelAdjustment")) else ModelAdjustment.HOLM,
+                modelComparisonFamily = if (request.has("modelComparisonFamily")) ModelComparisonFamily.valueOf(request.text("modelComparisonFamily")) else ModelComparisonFamily.ALL_FACTORS,
                 checkSlopes = if (request.has("checkSlopes")) request.flag("checkSlopes") else false,
+                modelHomogeneity = if (request.has("modelHomogeneity")) ModelHomogeneity.valueOf(request.text("modelHomogeneity")) else ModelHomogeneity.CELL_MEDIAN,
+                modelQQBasis = if (request.has("modelQQBasis")) ModelQQBasis.valueOf(request.text("modelQQBasis")) else ModelQQBasis.RAW,
                 factorCountMethod = if (request.has("factorCountMethod")) FactorCountMethod.valueOf(request.text("factorCountMethod")) else FactorCountMethod.PARALLEL,
+                factorParallelMethod = if (request.has("factorParallelMethod")) FactorParallelMethod.valueOf(request.text("factorParallelMethod")) else FactorParallelMethod.PCA_WISHART,
+                factorParallelSeed = if (request.has("factorParallelSeed")) request.text("factorParallelSeed") else "20261109",
                 factorCount = if (request.has("factorCount")) request.text("factorCount") else "1",
                 factorEigenvalue = if (request.has("factorEigenvalue")) request.text("factorEigenvalue") else "1",
+                factorEigenvalueBasis = if (request.has("factorEigenvalueBasis")) EigenvalueBasis.valueOf(request.text("factorEigenvalueBasis")) else EigenvalueBasis.CORRELATION,
                 factorExtraction = if (request.has("factorExtraction")) FactorExtraction.valueOf(request.text("factorExtraction")) else FactorExtraction.MINRES,
+                minresConvergence = if (request.has("minresConvergence")) MinresConvergence.valueOf(request.text("minresConvergence")) else MinresConvergence.TIGHT,
+                principalAxisConvergence = if (request.has("principalAxisConvergence")) PrincipalAxisConvergence.valueOf(request.text("principalAxisConvergence")) else PrincipalAxisConvergence.TIGHT,
                 factorRotation = if (request.has("factorRotation")) FactorRotation.valueOf(request.text("factorRotation")) else FactorRotation.VARIMAX,
+                varimaxConvergence = if (request.has("varimaxConvergence")) VarimaxConvergence.valueOf(request.text("varimaxConvergence")) else VarimaxConvergence.TIGHT,
                 factorLoadingCutoff = if (request.has("factorLoadingCutoff")) request.text("factorLoadingCutoff") else "0.30",
                 factorSortLoadings = if (request.has("factorSortLoadings")) request.flag("factorSortLoadings") else false,
                 factorScreePlot = if (request.has("factorScreePlot")) request.flag("factorScreePlot") else false,
@@ -236,7 +262,7 @@ internal object SessionCodec {
             listOfNotNull(request.items, request.predictors, request.descriptiveVariables, request.correlationVariables, request.factors, request.covariates).all {
             it.distinct().size == it.size && it.all { index -> index in 0..59 }
         }) { "The saved column list is invalid." }
-        require(listOf(request.factorCount, request.factorEigenvalue, request.factorLoadingCutoff).all { it.length <= 64 }) { "The saved factor option is too large." }
+        require(listOf(request.factorCount, request.factorEigenvalue, request.factorLoadingCutoff, request.factorParallelSeed).all { it.length <= 64 }) { "The saved factor option is too large." }
         require(request.first in 0..59 && request.second in 0..59 &&
             (request.count == null || request.count in 0..59) &&
             (request.weight == null || request.weight in 0..59)

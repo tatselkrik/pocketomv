@@ -2,7 +2,6 @@ package io.github.tatselkrik.statis130lite
 
 import kotlin.math.abs
 import kotlin.math.atanh
-import kotlin.math.ln
 import kotlin.math.sqrt
 import kotlin.math.tanh
 
@@ -60,41 +59,42 @@ internal object ReliabilityAnalysis {
         fun omega(standardized: Boolean): Double? {
             loading ?: return null
             val w = weights(all, standardized)
-            val common = MatrixMath.sum(DoubleArray(matrix.k) { loading[it] * w[it] })
             val uniqueness = MatrixMath.sum(DoubleArray(matrix.k) { (1 - loading[it] * loading[it]) * w[it] * w[it] })
-            return (common * common / (common * common + uniqueness)).takeIf(Double::isFinite)?.coerceIn(0.0, 1.0)
+            val sums = total(all, w)
+            val observedVariance = MatrixMath.dot(sums, sums) / (matrix.n - 1)
+            if (observedVariance <= 0.0) return null
+            return (1 - uniqueness / observedVariance).takeIf(Double::isFinite)
         }
         return ReliabilityFit(alpha(all), alpha(all, true), omega(false), omega(true), rest,
             all.map { i -> alpha(all.filter { it != i }) }, loading?.toList(), r, note)
     }
 
-    /** One congeneric factor: covariance = lambda lambda' + diagonal uniqueness. */
+    /** One-factor MINRES; omega uses observed total variance, including model residuals. */
     private fun fitOneFactor(r: Array<DoubleArray>, eigen: MatrixMath.Eigen): DoubleArray? {
         val k = r.size
-        val cap = 0.9999
+        // At an interior one-factor MINRES solution, uniqueness = 1-lambda^2.
+        // Minimize the off-diagonal residual sum directly, avoiding repeated
+        // eigendecompositions of a 60-item matrix during numerical optimization.
         fun objective(z: DoubleArray): Pair<Double, DoubleArray> {
-            val l = DoubleArray(k) { cap * tanh(z[it]) }
-            val inverseUnique = DoubleArray(k) { 1 / (1 - l[it] * l[it]) }
-            val v = DoubleArray(k) { inverseUnique[it] * l[it] }
-            val a = 1 + MatrixMath.dot(l, v)
-            val rv = DoubleArray(k) { MatrixMath.dot(r[it], v) }
-            val vrv = MatrixMath.dot(v, rv)
-            val value = -MatrixMath.sum(DoubleArray(k) { ln(inverseUnique[it]) }) + ln(a) +
-                MatrixMath.sum(inverseUnique) - vrv / a
-            val gradient = DoubleArray(k) { i ->
-                val s = inverseUnique[i]
-                val mii = s - v[i] * v[i] / a -
-                    (s * s - 2 * s * v[i] * rv[i] / a + v[i] * v[i] * vrv / (a * a))
-                val ml = v[i] / a - s * rv[i] / a + v[i] * vrv / (a * a)
-                2 * (ml - l[i] * mii) * cap * (1 - tanh(z[i]) * tanh(z[i]))
+            val l = DoubleArray(k) { tanh(z[it]) }
+            val squaredResiduals = DoubleArray(k * (k - 1) / 2)
+            var pair = 0
+            val gradient = DoubleArray(k)
+            for (i in 0 until k) for (j in 0 until i) {
+                val residual = l[i] * l[j] - r[i][j]
+                squaredResiduals[pair++] = residual * residual
+                gradient[i] += 2 * residual * l[j]
+                gradient[j] += 2 * residual * l[i]
             }
-            return value to gradient
+            for (i in 0 until k) gradient[i] *= 1 - l[i] * l[i]
+            return MatrixMath.sum(squaredResiduals) to gradient
         }
-        val starts = listOf(0.25, 0.6, 0.85).map { amplitude ->
-            DoubleArray(k) { i -> atanh((eigen.vectors[i][0] * sqrt(eigen.values[0].coerceAtLeast(0.1)) * amplitude).coerceIn(-0.85, 0.85) / cap) }
-        }
-        val best = starts.map { MatrixMath.minimize(it, ::objective) }.filter { it.converged }.minByOrNull { it.value } ?: return null
-        val loadings = DoubleArray(k) { cap * tanh(best.x[it]) }
+        val starts = listOf(0.6, 0.85, 1.0).map { amplitude -> DoubleArray(k) { i ->
+            atanh((eigen.vectors[i][0] * sqrt(eigen.values[0]) * amplitude).coerceIn(-0.9, 0.9))
+        } }
+        val best = starts.map { MatrixMath.minimize(it, ::objective, gradientTolerance = 1e-8) }
+            .filter { it.converged }.minByOrNull { it.value } ?: return null
+        val loadings = DoubleArray(k) { tanh(best.x[it]) }
         if (loadings.any { it * it >= 0.995 } || loadings.count { abs(it) > 1e-4 } < 3) return null
         if (MatrixMath.sum(loadings) < 0) for (i in loadings.indices) loadings[i] = -loadings[i]
         return loadings
@@ -121,10 +121,12 @@ internal object ReliabilityAnalysis {
         return AnalysisResult(request.method, "Internal consistency · complete cases", null, matrix.n.toLong(), matrix.excluded,
             tables = tables, notes = buildList {
                 add("Alpha and omega describe internal consistency; they do not establish validity or unidimensionality. Interpret them with the questionnaire and study design.")
-                add("Omega uses a single congeneric factor fitted by maximum likelihood. Standardized coefficients give each item unit variance; raw coefficients refer to the unweighted sum on the original scales.")
+                add("Omega uses a single congeneric factor fitted by minimum residuals (MINRES), with observed total-score variance in the denominator. Standardized omega uses the item correlation matrix, as in jamovi; raw omega weights the fitted uniquenesses by item variances on the original scales.")
                 add("Reverse-score negatively keyed items in Data first. No item is automatically reversed or removed, and no pass/fail cutoff is imposed.")
                 if (fit.alpha == null) add("Raw alpha is unavailable because the total score has no usable variation.")
                 if (fit.alpha != null && fit.alpha < 0) add("Negative alpha indicates inconsistent covariance; check item direction and scoring before interpreting the scale.")
+                if (fit.omega != null && fit.omega < 0 || fit.standardizedOmega != null && fit.standardizedOmega < 0)
+                    add("Negative omega indicates that the fitted unique variance exceeds observed total-score variance. Check item direction, covariance and the one-factor model before interpreting the scale.")
                 fit.omegaNote?.let(::add)
             })
     }

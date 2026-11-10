@@ -36,7 +36,10 @@ class StatisticsTest {
         val less = Statistics.run(data, AnalysisRequest(reference = "8", tail = Tail.LESS))
         assertEquals(0.49598799375773706 / 2, greater.pValue, 1e-12)
         assertEquals(1.0 - greater.pValue, less.pValue, 1e-12)
-        assertEquals(greater.estimates.first().lower95!!, less.estimates.first().lower95!!, 1e-12)
+        assertEquals(Double.POSITIVE_INFINITY, greater.estimates.first().upper95!!, 0.0)
+        assertEquals(Double.NEGATIVE_INFINITY, less.estimates.first().lower95!!, 0.0)
+        assertTrue(greater.estimates.first().lower95!!.isFinite())
+        assertTrue(less.estimates.first().upper95!!.isFinite())
     }
 
     @Test

@@ -12,7 +12,7 @@ class FactorSessionReportTest {
         val data=fictionalExample(method)
         val request=AnalysisRequest.forData(method,data).let { if(method==AnalysisMethod.EFA) it.copy(factorCountMethod=FactorCountMethod.FIXED,
             factorCount="2",factorRotation=FactorRotation.PROMAX,factorLoadingCutoff="0.2",factorSortLoadings=true,factorScreePlot=true)
-        else it.copy(sumsOfSquares=SumsOfSquares.II,modelComparisons=true,modelAdjustment=FriedmanAdjustment.BONFERRONI,
+        else it.copy(sumsOfSquares=SumsOfSquares.II,modelComparisons=true,modelAdjustment=ModelAdjustment.BONFERRONI,
             checkNormality=true,checkVariances=true,checkSlopes=true,showQQPlot=true,showScatterplot=true) }
         return AnalysisScreenState(page=AppPage.RESULTS,data=data,draft=data.asCsv(),appliedDraft=data.asCsv(),request=request,
             result=Statistics.run(data,request),source="Fictional reference practice",fictional=true,draftFictional=true)
@@ -31,7 +31,7 @@ class FactorSessionReportTest {
 
     @Test fun versionOneSessionsWithoutFactorFieldsKeepTheirOriginalMeaning() {
         val data=fictionalExample(AnalysisMethod.ONE_SAMPLE_T)
-        val state=AnalysisScreenState(data=data,draft=data.asCsv(),appliedDraft=data.asCsv(),request=AnalysisRequest.forData(AnalysisMethod.ONE_SAMPLE_T,data))
+        val state=AnalysisScreenState(data=data,draft=data.asCsv(),appliedDraft=data.asCsv(),request=AnalysisRequest.forData(AnalysisMethod.ONE_SAMPLE_T,data).copy(modelAdjustment=ModelAdjustment.HOLM,factorEigenvalue="1",factorRotation=FactorRotation.VARIMAX))
         val json=JSONObject(String(SessionCodec.encode(SavedSession.capture(state,null))))
         fields.forEach { json.getJSONObject("request").remove(it) }
         assertEquals(state,SessionCodec.decode(json.toString().toByteArray()).restoreScreen())

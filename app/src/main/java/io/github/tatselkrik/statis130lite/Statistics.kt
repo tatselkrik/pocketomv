@@ -143,9 +143,11 @@ object Statistics {
                 "These values do not produce a defined test. Check the sample sizes and variation."
             }
         }
+        val confidenceTail = if (request.method in setOf(AnalysisMethod.ONE_SAMPLE_T, AnalysisMethod.INDEPENDENT_T, AnalysisMethod.PAIRED_T)) request.tail else Tail.TWO_SIDED
         require(result.estimates.all { estimate ->
-            estimate.value.isFinite() && estimate.lower95?.isFinite() != false &&
-                estimate.upper95?.isFinite() != false
+            estimate.value.isFinite() &&
+                (estimate.lower95?.isFinite() != false || confidenceTail == Tail.LESS && estimate.lower95 == Double.NEGATIVE_INFINITY) &&
+                (estimate.upper95?.isFinite() != false || confidenceTail == Tail.GREATER && estimate.upper95 == Double.POSITIVE_INFINITY)
         }) { "The numbers are outside the supported calculation range. Rescale the variables." }
         val missingNote = if (result.excludedRows > 0) {
             listOf("${result.excludedRows} data rows were excluded because selected values were missing.")
@@ -153,7 +155,9 @@ object Statistics {
         val categorical = if (request.method in setOf(AnalysisMethod.CHI_INDEPENDENCE, AnalysisMethod.FISHER_EXACT))
             CategoricalAssociations.attach(result, request) else result
         val extended = PlotCalculator.attach(data, request, MeanDiagnostics.attach(data, request, categorical))
-        return extended.copy(notes = extended.notes + missingNote)
+        val countNote = if (request.method.usesCounts && request.count != null && request.countMissingPolicy == CountMissingPolicy.OMIT)
+            listOf("Rows with missing frequency counts are omitted by the selected policy. Counts must otherwise be nonnegative whole numbers.") else emptyList()
+        return extended.copy(notes = extended.notes + missingNote + countNote)
     }
 
     private fun oneSample(data: CourseData, request: AnalysisRequest): AnalysisResult {
@@ -178,12 +182,13 @@ object Statistics {
             excludedRows = data.rows.size - values.size,
             degreesOfFreedom = listOf(df),
             estimates = listOf(
-                interval("Mean", mean, sqrt(variance / values.size), df),
+                interval("Mean", mean, sqrt(variance / values.size), df, request.tail),
+                interval("Mean difference", mean - reference, sqrt(variance / values.size), df, request.tail),
                 Estimate("Reference mean", reference),
                 Estimate("Cohen's d", (mean - reference) / sqrt(variance)),
             ),
             samples = listOf(summary(data.columns[request.first], values)),
-            notes = listOf(tailNote(request.tail, "${data.columns[request.first]} mean − $reference"), CI_NOTE),
+            notes = listOf(tailNote(request.tail, "${data.columns[request.first]} mean − $reference"), confidenceNote(request.tail)),
         )
     }
 
@@ -217,6 +222,7 @@ object Statistics {
             sqrt(pooled * (1.0 / first.size + 1.0 / second.size))
         } else sqrt(a + b)
         val difference = mean(first) - mean(second)
+        val effectSD = if (request.equalVariance) sqrt(pooled) else sqrt(v1 / 2 + v2 / 2)
         return AnalysisResult(
             method = request.method,
             calculation = if (request.equalVariance) "Student's independent t test" else "Welch's independent t test",
@@ -227,11 +233,11 @@ object Statistics {
             excludedRows = data.rows.size - first.size - second.size,
             degreesOfFreedom = listOf(df),
             estimates = listOf(
-                interval("Mean difference", difference, se, df),
-                Estimate("Cohen's d (pooled SD)", difference / sqrt(pooled)),
+                interval("Mean difference", difference, se, df, request.tail),
+                Estimate(if (request.equalVariance) "Cohen's d (pooled SD)" else "Cohen's d (average variance SD)", difference / effectSD),
             ),
             samples = groups.map { summary(it.label, it.values) },
-            notes = listOf(tailNote(request.tail, "${groups[0].label} − ${groups[1].label}"), CI_NOTE),
+            notes = listOf(tailNote(request.tail, "${groups[0].label} − ${groups[1].label}"), confidenceNote(request.tail)),
         )
     }
 
@@ -253,7 +259,7 @@ object Statistics {
             excludedRows = data.rows.size - differences.size,
             degreesOfFreedom = listOf(df),
             estimates = listOf(
-                interval("Mean paired difference", mean(differences), sqrt(variance / differences.size), df),
+                interval("Mean paired difference", mean(differences), sqrt(variance / differences.size), df, request.tail),
                 Estimate("Cohen's dz", mean(differences) / sqrt(variance)),
             ),
             samples = listOf(
@@ -263,7 +269,7 @@ object Statistics {
             ),
             notes = listOf(
                 tailNote(request.tail, "${data.columns[request.first]} − ${data.columns[request.second]}"),
-                CI_NOTE,
+                confidenceNote(request.tail),
             ),
         )
     }
@@ -472,22 +478,25 @@ object Statistics {
 
     private fun correlation(data: CourseData, request: AnalysisRequest): AnalysisResult {
         val pairs = readPairs(data, request)
-        require(pairs.first.size >= 3) { "Correlation inference needs at least three complete pairs." }
         val ranked = request.method == AnalysisMethod.SPEARMAN
+        require(pairs.first.size >= if (ranked) 2 else 3) {
+            if (ranked) "Spearman inference needs at least two complete pairs." else "Pearson inference needs at least three complete pairs."
+        }
         val r = correlationCoefficient(pairs.first, pairs.second, ranked)
+        val rankProbability = if (ranked) SpearmanProbability.calculate(pairs.first, pairs.second, r, request.tail) else null
         val df = pairs.first.size - 2.0
         val t = if (abs(r) == 1.0) {
             if (r > 0) Double.POSITIVE_INFINITY else Double.NEGATIVE_INFINITY
         } else r * sqrt(df / ((1.0 - r) * (1.0 + r)))
         return AnalysisResult(
             request.method,
-            if (ranked) "Average-rank Spearman correlation with t approximation" else "Pearson correlation with t test",
-            if (ranked) "ρ" else "r", r, tProbability(t, df, request.tail),
+            if (ranked) "Average-rank Spearman correlation · ${rankProbability!!.method.description}" else "Pearson correlation with t test",
+            if (ranked) "ρ" else "r", r, rankProbability?.p ?: tProbability(t, df, request.tail),
             pairs.first.size.toLong(), data.rows.size - pairs.first.size,
             degreesOfFreedom = listOf(df),
             samples = listOf(summary(data.columns[request.first], pairs.first), summary(data.columns[request.second], pairs.second)),
             notes = listOf(tailNote(request.tail, "correlation")) +
-                if (ranked) listOf("The p-value uses a t approximation, including for small samples. Tied values receive average ranks.")
+                if (ranked) listOf("${rankProbability!!.method.description}. Tied values receive average ranks. Exact probabilities include the observed rank arrangement; untied samples of 10–1,290 pairs use AS 89. The displayed N − 2 degrees of freedom apply to the t approximation only.")
                 else listOf("The p-value tests zero population correlation under the usual Pearson assumptions."),
         )
     }
@@ -527,6 +536,7 @@ object Statistics {
                 Estimate("Slope standard error", seSlope),
                 Estimate("R²", rSquared),
                 Estimate("Adjusted R²", 1.0 - (1.0 - rSquared) * (pairs.first.size - 1) / df),
+                Estimate("RMSE", sqrt(residual / pairs.first.size) * fit.scaleY),
                 Estimate("Residual standard deviation", sqrt(residual / df) * fit.scaleY),
             ),
             samples = listOf(summary(data.columns[request.first], pairs.first), summary(data.columns[request.second], pairs.second)),
@@ -579,6 +589,11 @@ object Statistics {
     private data class FrequencyRecord(val first: String, val second: String, val count: Long)
 
     private fun frequencyRecords(data: CourseData, request: AnalysisRequest): List<FrequencyRecord> {
+        if (request.countMissingPolicy == CountMissingPolicy.REJECT) request.count?.let { column ->
+            require(data.rows.none { it[column].isMissingNumber() }) {
+                "The frequency column contains missing counts. Complete those counts, or select Omit rows with missing counts."
+            }
+        }
         val records = data.rows.indices.mapNotNull { row ->
             val first = data.rows[row][request.first].trim()
             val second = if (request.method.secondLabel == null) "" else data.rows[row][request.second].trim()
@@ -681,9 +696,16 @@ object Statistics {
         )
     }
 
-    private fun interval(label: String, value: Double, se: Double, df: Double): Estimate {
-        val margin = TDistribution.of(df).inverseSurvivalProbability(0.025) * se
-        return Estimate(label, value, value - margin, value + margin)
+    private fun interval(label: String, value: Double, se: Double, df: Double, tail: Tail = Tail.TWO_SIDED): Estimate {
+        val margin = TDistribution.of(df).inverseSurvivalProbability(if (tail == Tail.TWO_SIDED) 0.025 else 0.05) * se
+        return Estimate(label, value, if (tail == Tail.LESS) Double.NEGATIVE_INFINITY else value - margin,
+            if (tail == Tail.GREATER) Double.POSITIVE_INFINITY else value + margin)
+    }
+
+    private fun confidenceNote(tail: Tail): String = when (tail) {
+        Tail.TWO_SIDED -> CI_NOTE
+        Tail.GREATER -> "Reported confidence intervals are one-sided 95% intervals with a finite lower bound and an unbounded upper end."
+        Tail.LESS -> "Reported confidence intervals are one-sided 95% intervals with an unbounded lower end and a finite upper bound."
     }
 
     internal fun tProbability(statistic: Double, df: Double, tail: Tail): Double {

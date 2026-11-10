@@ -2,6 +2,7 @@ package io.github.tatselkrik.statis130lite
 
 import org.apache.commons.statistics.distribution.NormalDistribution
 import org.apache.commons.statistics.inference.FisherExactTest
+import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.ln
 import kotlin.math.sqrt
@@ -50,25 +51,33 @@ internal object CategoricalAssociations {
         val counts = oriented(table, request)
         val a = counts.a.toDouble(); val b = counts.b.toDouble(); val c = counts.c.toDouble(); val d = counts.d.toDouble()
         val phi = ((a*d - b*c) / sqrt((a+b)*(c+d)*(a+c)*(b+d))).coerceIn(-1.0, 1.0)
-        val odds = a*d/(b*c)
+        val sampleOdds = a*d/(b*c)
+        val zeroCell = a == 0.0 || b == 0.0 || c == 0.0 || d == 0.0
+        val correction = if (zeroCell) 0.5 else 0.0
+        val aa = a + correction; val bb = b + correction; val cc = c + correction; val dd = d + correction
+        val odds = aa*dd/(bb*cc)
         val risk = (a/(a+b))/(c/(c+d))
         fun interval(value: Double, se: Double): Pair<Double, Double> =
             exp(ln(value) - z95*se) to exp(ln(value) + z95*se)
-        val oddsInterval = if (a > 0 && b > 0 && c > 0 && d > 0)
-            interval(odds, sqrt(1/a+1/b+1/c+1/d)) else null
+        val oddsInterval = interval(odds, sqrt(1/aa+1/bb+1/cc+1/dd))
         val riskInterval = if (a > 0 && c > 0)
             interval(risk, sqrt(b/(a*(a+b)) + d/(c*(c+d)))) else null
         val values = listOf(
-            AssociationValue("Phi (signed)", phi),
-            AssociationValue("Odds ratio (sample)", odds, oddsInterval?.first, oddsInterval?.second,
-                if (oddsInterval == null) "Log-Wald interval unavailable with a zero cell; no continuity correction applied." else "Log-Wald 95% interval."),
+            AssociationValue("Phi", abs(phi), note = "Association magnitude; matches the nonnegative Phi convention in jamovi."),
+            AssociationValue("Odds ratio", odds, oddsInterval.first, oddsInterval.second,
+                if (zeroCell) "Adds 0.5 to all four cells because at least one cell is zero, as in jamovi; log-Wald 95% interval."
+                else "Sample ad/bc; log-Wald 95% interval."),
             AssociationValue("Risk ratio (relative risk)", risk, riskInterval?.first, riskInterval?.second,
-                if (riskInterval == null) "Log-Wald interval unavailable with zero events in a group; no continuity correction applied." else "Katz log-Wald 95% interval."))
-        val orientation = "Comparison: ${counts.comparison} versus ${counts.reference}; event: ${counts.event} (other category: ${counts.other}). OR = ad/bc; RR = [a/(a+b)]/[c/(c+d)] in this orientation."
+                if (riskInterval == null) "Log-Wald interval unavailable with zero events in a group; no continuity correction applied." else "Katz log-Wald 95% interval."),
+            AssociationValue("Phi (signed)", phi, note = "Direction for the selected group/event orientation; reversing one category order reverses its sign.")) +
+            if (zeroCell) listOf(AssociationValue("Odds ratio (uncorrected sample)", sampleOdds,
+                note = "Original ad/bc boundary estimate, without correction; a log-Wald interval is unavailable.")) else emptyList()
+        val orientation = "Comparison: ${counts.comparison} versus ${counts.reference}; event: ${counts.event} (other category: ${counts.other}). Uncorrected OR = ad/bc; RR = [a/(a+b)]/[c/(c+d)] in this orientation."
         val output = AnalysisTable("2 × 2 association measures", listOf("Measure", "Estimate", "95% CI", "Note"), values.map {
             listOf(it.label, formatStatistic(it.value), if (it.lower95 != null && it.upper95 != null)
                 "[${formatStatistic(it.lower95)}, ${formatStatistic(it.upper95)}]" else "—", it.note)
-        }, listOf(orientation, "Cramér's V is reported in Estimates. Phi changes sign when one category order is reversed. Confidence intervals are large-sample approximations and can be unreliable with sparse counts. Risk ratios require a sampling design that supports comparing group event probabilities; association alone does not establish causation."))
+        }, listOf(orientation, "A zero cell triggers the 0.5 adjustment for the odds-ratio measure and its interval only. Fisher's exact test uses the original counts and retains its explicitly labeled uncorrected sample odds-ratio statistic. Relative risk is not corrected.",
+            "Cramér's V is reported in Estimates. Phi gives magnitude; the separately labeled signed Phi changes sign when one category order is reversed. Confidence intervals are large-sample approximations and can be unreliable with sparse counts. Risk ratios require a sampling design that supports comparing group event probabilities; association alone does not establish causation."))
         return result.copy(associations = AssociationSummary(counts.comparison, counts.reference, counts.event, counts.other, values),
             tables = result.tables + output, notes = result.notes + orientation)
     }
