@@ -4,7 +4,15 @@ import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.nio.charset.StandardCharsets
 
-data class CourseData(val columns: List<String>, val rows: List<List<String>>) {
+enum class ColumnMeasure { CONTINUOUS, NOMINAL, ORDINAL, ID }
+
+data class ColumnMetadata(val measure: ColumnMeasure, val levels: List<String> = emptyList())
+
+data class CourseData(
+    val columns: List<String>,
+    val rows: List<List<String>>,
+    val columnMetadata: Map<Int, ColumnMetadata> = emptyMap(),
+) {
     fun asCsv(): String = (listOf(columns) + rows).joinToString("\r\n") { row ->
         row.joinToString(",") { value ->
             if (value.any { it in ",;\t\"\r\n" }) "\"${value.replace("\"", "\"\"")}\"" else value
@@ -12,8 +20,19 @@ data class CourseData(val columns: List<String>, val rows: List<List<String>>) {
     }
 
     fun numericColumns(): List<Int> = columns.indices.filter { index ->
+        val measure = columnMetadata[index]?.measure
+        if (measure != null && measure != ColumnMeasure.CONTINUOUS) return@filter false
         val values = rows.map { it[index] }.filterNot(String::isMissingNumber)
         values.isNotEmpty() && values.all { it.toDoubleOrNull()?.isFinite() == true }
+    }
+
+    internal fun orderedCategories(column: Int, labels: Iterable<String>, numericSort: Boolean = true): List<String> {
+        val remaining = labels.toMutableSet()
+        val stored = columnMetadata[column]?.levels.orEmpty().map(String::trim).filter(remaining::remove)
+        val extra = if (numericSort && remaining.all { it.toDoubleOrNull()?.isFinite() == true }) {
+            remaining.sortedWith(compareBy<String> { it.toDouble() }.thenBy { it })
+        } else remaining.sorted()
+        return stored + extra
     }
 }
 

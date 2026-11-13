@@ -93,7 +93,9 @@ internal object FactorialAnova {
         val rows = data.rows.indices.filter { row -> !data.rows[row][request.first].isMissingNumber() &&
             covariates.none { data.rows[row][it].isMissingNumber() } && factors.none { data.rows[row][it].isBlank() } }
         require(rows.size >= 4) { "Add at least four complete observations in the selected columns." }
-        val labels = factors.map { column -> data.rows.let { table -> rows.map { table[it][column].trim() }.distinct().sorted() } }
+        val labels = factors.map { column ->
+            data.orderedCategories(column, rows.map { data.rows[it][column].trim() }, numericSort = false)
+        }
         require(labels.all { it.size in 2..6 }) { "Each factor needs 2–6 observed levels among complete cases." }
         val combinations = labels.fold(listOf(emptyList<Int>())) { all, levels -> all.flatMap { prefix -> levels.indices.map { prefix + it } } }
         require(combinations.size <= MAX_PARAMETERS) { "Use at most $MAX_PARAMETERS combinations of factor levels." }

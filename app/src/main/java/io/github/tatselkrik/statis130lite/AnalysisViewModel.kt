@@ -54,6 +54,8 @@ class AnalysisViewModel(application: Application) : AndroidViewModel(application
     private var pendingWorkbook: ExcelWorkbook? = null
     internal var worksheetImport by mutableStateOf<WorksheetImportState?>(null)
         private set
+    internal var projectImport by mutableStateOf<Pair<String, OmvProject>?>(null)
+        private set
     private var unreadableWorkUntouched = false
     internal var tableUndo by mutableStateOf<AnalysisScreenState?>(null)
         private set
@@ -154,7 +156,14 @@ class AnalysisViewModel(application: Application) : AndroidViewModel(application
             state = state.copy(busy = "Reading data…", error = null)
             try {
                 val data = withContext(Dispatchers.Default) { parseDelimited(text, names) }
-                acceptData(data, text, names, if (fictional) "Practice table" else "Entered data", fictional)
+                val previous = state.data
+                val metadata = if (previous != null && names && state.appliedNames) {
+                    data.columns.mapIndexedNotNull { index, name ->
+                        previous.columnMetadata[previous.columns.indexOf(name)]?.let { index to it }
+                    }.toMap()
+                } else emptyMap()
+                acceptData(data.copy(columnMetadata = metadata), text, names,
+                    if (fictional) "Practice table" else "Entered data", fictional)
             } catch (error: Exception) {
                 fail(error, "The table could not be read. Check its rows and separators.")
             }
@@ -246,6 +255,12 @@ class AnalysisViewModel(application: Application) : AndroidViewModel(application
                 }
                 when (opened) {
                     is DataImport.Table -> acceptData(opened.data, opened.data.asCsv(), true, name, fictional = false)
+                    is DataImport.Project -> {
+                        if (opened.project.analyses.size > 1) {
+                            projectImport = name to opened.project
+                            state = state.copy(busy = null)
+                        } else applyProject(name, opened.project, opened.project.analyses.singleOrNull())
+                    }
                     is DataImport.Workbook -> {
                         pendingWorkbook = opened.workbook
                         worksheetImport = WorksheetImportState(name, opened.workbook.sheets,
@@ -254,9 +269,51 @@ class AnalysisViewModel(application: Application) : AndroidViewModel(application
                     }
                 }
             } catch (error: Exception) {
-                fail(error, "The file could not be opened. Choose a local Excel .xlsx, CSV or TSV file.")
+                fail(error, "The file could not be opened. Choose a local jamovi .omv, Excel .xlsx, CSV or TSV file.")
             }
         }
+    }
+
+    internal fun chooseProjectAnalysis(index: Int?) {
+        val (name, project) = projectImport ?: return
+        if (state.busy != null || (index != null && index !in project.analyses.indices)) return
+        projectImport = null
+        viewModelScope.launch {
+            try {
+                applyProject(name, project, index?.let(project.analyses::get))
+            } catch (error: Exception) {
+                fail(error, "The jamovi project could not be opened.")
+            }
+        }
+    }
+
+    internal fun cancelProjectImport() {
+        projectImport = null
+    }
+
+    private suspend fun applyProject(name: String, project: OmvProject, request: AnalysisRequest?) {
+        state = state.copy(busy = "Opening jamovi project…", error = null)
+        val (draft, result) = withContext(Dispatchers.Default) {
+            val result = if (request != null && project.restoreResult) {
+                try {
+                    Statistics.run(project.data, request)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: IllegalArgumentException) {
+                    null
+                }
+            } else null
+            project.data.asCsv() to result
+        }
+        val status = when {
+            result != null -> "Opened the saved pocketomv analysis."
+            request != null -> "Loaded ${request.method.title}. Tap Run analysis to calculate."
+            else -> "Opened the jamovi data."
+        }
+        val limitations = project.notes + if (project.restoreResult && result == null && request != null)
+            listOf("Review the saved options before running the analysis.") else emptyList()
+        acceptData(project.data, draft, true, name, project.fictional, request, result,
+            (listOf(status) + limitations).joinToString(" "), limitations)
     }
 
     internal fun chooseWorksheet(id: String) {
@@ -335,7 +392,7 @@ class AnalysisViewModel(application: Application) : AndroidViewModel(application
 
     suspend fun prepareExport(kind: ExportKind): Boolean {
         ready.await()
-        if (state.busy != null || state.data == null ||
+        if (state.busy != null || state.data == null || (kind == ExportKind.PROJECT && state.hasUnappliedChanges) ||
             (kind.requiresResult && state.result == null)
         ) return false
         pendingExport = kind
@@ -367,9 +424,13 @@ class AnalysisViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             state = state.copy(busy = "Saving…", error = null)
             try {
-                withContext(Dispatchers.IO) {
+                val message = withContext(Dispatchers.IO) {
+                    val project = if (kind == ExportKind.PROJECT) {
+                        OmvProjects.write(requireNotNull(snapshot.data), snapshot.request, snapshot.result, snapshot.fictional)
+                    } else null
                     val bytes = when (kind) {
                         ExportKind.DATA -> requireNotNull(snapshot.data) { "Open a table before exporting." }.asCsv().toByteArray(Charsets.UTF_8)
+                        ExportKind.PROJECT -> requireNotNull(project).bytes
                         ExportKind.REPORT -> requireNotNull(snapshot.result) {
                             "Run the analysis before exporting its report."
                         }.asReport(snapshot.source, snapshot.fictional, snapshot.preparationNotes).toByteArray(Charsets.UTF_8)
@@ -382,8 +443,13 @@ class AnalysisViewModel(application: Application) : AndroidViewModel(application
                     require(bytes.size <= 32 * 1024 * 1024) { "The report exceeds 32 MB. Export a smaller dataset." }
                     val stream = resolver.openOutputStream(uri, "wt") ?: error("The selected file could not be opened.")
                     stream.use { it.write(bytes) }
+                    when (project?.includesJamoviAnalysis) {
+                        true -> "Jamovi project saved."
+                        false -> "Jamovi data saved. These analysis settings reopen in pocketomv."
+                        null -> "File saved"
+                    }
                 }
-                state = state.copy(busy = null, message = "File saved")
+                state = state.copy(busy = null, message = message)
             } catch (error: Exception) {
                 fail(error, "The file could not be saved. Choose a location you can write to.")
             }
@@ -409,7 +475,11 @@ class AnalysisViewModel(application: Application) : AndroidViewModel(application
         return sessions.save(SavedSession.capture(state, pendingExport), immediate)
     }
 
-    private fun acceptData(data: CourseData, text: String, names: Boolean, source: String, fictional: Boolean) {
+    private fun acceptData(
+        data: CourseData, text: String, names: Boolean, source: String, fictional: Boolean,
+        request: AnalysisRequest? = null, result: AnalysisResult? = null, message: String? = null,
+        preparationNotes: List<String> = emptyList(),
+    ) {
         pendingExport = null
         tableUndo = null
         state = state.copy(
@@ -421,12 +491,13 @@ class AnalysisViewModel(application: Application) : AndroidViewModel(application
             source = source,
             fictional = fictional,
             draftFictional = fictional,
-            request = AnalysisRequest.forData(state.request.method, data),
-            result = null,
+            request = request ?: AnalysisRequest.forData(state.request.method, data),
+            result = result,
             error = null,
             busy = null,
-            page = AppPage.ANALYSIS,
-            preparationNotes = emptyList(),
+            page = if (result == null) AppPage.ANALYSIS else AppPage.RESULTS,
+            message = message,
+            preparationNotes = preparationNotes,
         )
         persist()
     }

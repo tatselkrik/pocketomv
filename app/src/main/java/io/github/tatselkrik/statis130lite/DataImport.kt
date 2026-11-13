@@ -5,6 +5,7 @@ import java.io.InputStream
 internal sealed interface DataImport {
     data class Table(val data: CourseData) : DataImport
     data class Workbook(val workbook: ExcelWorkbook) : DataImport
+    data class Project(val project: OmvProject) : DataImport
 }
 
 internal fun readDataImport(input: InputStream, name: String, mimeType: String?, headers: Boolean): DataImport {
@@ -19,6 +20,10 @@ internal fun readDataImport(input: InputStream, name: String, mimeType: String?,
     }
     buffered.reset()
     val zip = size >= 2 && signature[0] == 'P'.code.toByte() && signature[1] == 'K'.code.toByte()
+    if (name.endsWith(".omv", true) || mimeType == OMV_MIME || (zip && OmvProjects.hasManifestHeader(buffered))) {
+        require(zip) { "The selected .omv file is not a jamovi archive." }
+        return DataImport.Project(OmvProjects.read(buffered))
+    }
     val compound = size >= 4 && signature.contentEquals(byteArrayOf(0xd0.toByte(), 0xcf.toByte(), 0x11, 0xe0.toByte()))
     require(!compound && !name.endsWith(".xls", true) && !name.endsWith(".xlsb", true)) {
         "Choose an Excel .xlsx workbook. Older .xls and binary .xlsb workbooks are not supported."

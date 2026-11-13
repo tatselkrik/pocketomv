@@ -20,7 +20,7 @@ internal data class PreparedColumn(
     fun appendTo(data: CourseData): TableChange {
         require(values.size == data.rows.size) { "The table changed. Preview the calculation again." }
         val output = DataEditing.columnName(data, name)
-        val next = CourseData(data.columns + output, data.rows.mapIndexed { row, cells -> cells + values[row] })
+        val next = data.copy(columns = data.columns + output, rows = data.rows.mapIndexed { row, cells -> cells + values[row] })
         DataEditing.validate(next)
         return TableChange(next, note = "Created $output: $explanation Values were calculated at creation; rescore after changing inputs.")
     }
@@ -80,7 +80,7 @@ internal object DataEditing {
             }
             is TableEdit.AddColumn -> {
                 val name = columnName(data, edit.name)
-                TableChange(CourseData(data.columns + name, data.rows.map { it + "" }))
+                TableChange(data.copy(columns = data.columns + name, rows = data.rows.map { it + "" }))
             }
             is TableEdit.RenameColumn -> {
                 require(edit.column in data.columns.indices) { "Select an existing column." }
@@ -90,8 +90,11 @@ internal object DataEditing {
             is TableEdit.DeleteColumn -> {
                 require(edit.column in data.columns.indices) { "Select an existing column." }
                 require(data.columns.size > 1) { "Keep at least one column." }
+                val metadata = data.columnMetadata.filterKeys { it != edit.column }.mapKeys { (index, _) ->
+                    if (index > edit.column) index - 1 else index
+                }
                 TableChange(CourseData(data.columns.filterIndexed { i, _ -> i != edit.column },
-                    data.rows.map { row -> row.filterIndexed { i, _ -> i != edit.column } }), removedColumn = edit.column)
+                    data.rows.map { row -> row.filterIndexed { i, _ -> i != edit.column } }, metadata), removedColumn = edit.column)
             }
             is TableEdit.Derived -> edit.prepared.appendTo(data)
         }

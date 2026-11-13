@@ -19,7 +19,7 @@
 
 pocketomv was built specifically for offline statistical analysis on Android, to avoid interruptions from jamovi Cloud session limits. It supports common analyses and is not a full replacement for jamovi.
 
-Enter a table, choose a worksheet from an Excel workbook, or open a CSV/TSV file. Select an analysis and its variables, then review statistics, distributions, available confidence intervals and method notes. Copy the report or save it as text, HTML or PDF.
+Enter a table, open a jamovi project or CSV/TSV file, or choose a worksheet from an Excel workbook. Select an analysis and its variables, then review statistics, distributions, available confidence intervals and method notes. Copy the report or save it as text, HTML or PDF.
 
 Current work saves automatically in private device storage. The app restores applied data, unfinished edits, analysis options and the current screen when reopened, and recalculates saved results.
 
@@ -35,6 +35,7 @@ Current work saves automatically in private device storage. The app restores app
 - Optional boxplots, normal Q–Q plots and scatterplots, with a fitted line for simple regression.
 - Separate Data, Analyze and Results screens.
 - Data entry with optional column headings, direct Excel `.xlsx` import with worksheet selection, and CSV/TSV import.
+- Offline jamovi `.omv` import and export with data and supported built-in analysis settings.
 - A cell grid with row/column editing, one-step undo, recoding, reverse scoring and item sum/mean scores.
 - Student and Welch options for independent t tests, plus ordinary and Welch one-way ANOVA.
 - Optional Shapiro–Wilk normality checks for t tests and one-way ANOVA, plus mean- or median-centered Levene checks for independent groups.
@@ -230,6 +231,12 @@ Scored columns contain **saved values calculated at creation**. Recreate scores 
 <p align="center"><em>Fictional questionnaire responses and score preview.</em></p>
 
 ### Data formats
+
+Open a jamovi `.omv` file from **Data**. When several supported analyses are available, choose one to load or open the data alone. Tap **Run analysis** to calculate the selected analysis in pocketomv. Imported variables retain their measurement roles, category labels and level order. Calculated columns import as saved values. Active filters exclude rows from the imported copy, and supported custom missing values become blank cells. Projects with active case weights must be unweighted in jamovi before import.
+
+Use **Save jamovi project (.omv)** in **Data** or **Results**. The file carries the applied table and the current pocketomv settings. For settings with a jamovi equivalent, it also includes a built-in analysis jamovi can open and recalculate. If the analysis has been run, jamovi can display its saved pocketomv tables. The two apps can offer different diagnostics, plots and calculation options. Settings without a jamovi equivalent, such as a pocketomv weighted mean, can be recovered by opening the file in pocketomv. Desktop jamovi may discard pocketomv-specific settings when it saves a new copy.
+
+Each exported file holds one analysis. Jamovi add-on modules, editable formulas and filter rules, and embedded results and plots from incoming projects stay in the original file. The file limit is 16 MB, with the same row, column, cell and editable-text limits as other imports.
 
 Excel `.xlsx` workbooks open directly through Android's file picker. Choose one worksheet at a time, including a hidden worksheet when explicitly selected. Blank cells keep their column positions, fully blank rows are skipped, and the first nonblank row supplies column names when that option is checked. Cancelled or failed imports preserve the current table.
 

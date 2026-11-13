@@ -88,11 +88,12 @@ data class AnalysisResult(
 /** Stateless calculations. Only columns selected in the request take part in row exclusion. */
 object Statistics {
     fun goodnessCategoryOrder(data: CourseData, request: AnalysisRequest): List<String> =
-        orderedLabels(frequencyRecords(data, request).map { it.first })
+        data.orderedCategories(request.first, frequencyRecords(data, request).map { it.first })
 
     internal fun contingencyCategoryOrder(data: CourseData, request: AnalysisRequest): Pair<List<String>, List<String>> {
         val records = frequencyRecords(data, request).filter { it.count > 0 }
-        return orderedLabels(records.map { it.first }) to orderedLabels(records.map { it.second })
+        return data.orderedCategories(request.first, records.map { it.first }) to
+            data.orderedCategories(request.second, records.map { it.second })
     }
 
     fun run(data: CourseData, request: AnalysisRequest): AnalysisResult {
@@ -405,7 +406,7 @@ object Statistics {
 
     private fun goodness(data: CourseData, request: AnalysisRequest): AnalysisResult {
         val records = frequencyRecords(data, request)
-        val labels = orderedLabels(records.map { it.first })
+        val labels = data.orderedCategories(request.first, records.map { it.first })
         require(labels.size in 2..40) { "A goodness-of-fit test needs 2 to 40 categories." }
         val observed = labels.map { label -> records.filter { it.first == label }.sumOf { it.count } }
         val total = checkedTotal(observed)
@@ -443,8 +444,8 @@ object Statistics {
         val records = frequencyRecords(data, request)
         // Zero-only categories do not contribute a row or column to the contingency table.
         val positive = records.filter { it.count > 0 }
-        val rowLabels = orderedLabels(positive.map { it.first })
-        val columnLabels = orderedLabels(positive.map { it.second })
+        val rowLabels = data.orderedCategories(request.first, positive.map { it.first })
+        val columnLabels = data.orderedCategories(request.second, positive.map { it.second })
         require(rowLabels.size >= 2 && columnLabels.size >= 2) {
             "Independence needs at least two nonempty categories in each variable."
         }
@@ -586,7 +587,7 @@ object Statistics {
             }
         }
         require(groups.size in 2..40) { "Select a grouping column containing 2 to 40 nonempty groups." }
-        return orderedLabels(groups.keys.toList()).map { Group(it, groups.getValue(it).toDoubleArray()) }
+        return data.orderedCategories(request.second, groups.keys).map { Group(it, groups.getValue(it).toDoubleArray()) }
     }
 
     private data class FrequencyRecord(val first: String, val second: String, val count: Long)
@@ -629,13 +630,6 @@ object Statistics {
         return if (low > 0) {
             listOf("$low of ${expected.size} expected counts are below 5. The chi-square approximation may be unreliable.")
         } else emptyList()
-    }
-
-    private fun orderedLabels(labels: List<String>): List<String> {
-        val distinct = labels.distinct()
-        return if (distinct.all { it.toDoubleOrNull()?.isFinite() == true }) {
-            distinct.sortedWith(compareBy<String> { it.toDouble() }.thenBy { it })
-        } else distinct.sorted()
     }
 
     private fun mean(values: DoubleArray): Double = Mean.of(*values).asDouble

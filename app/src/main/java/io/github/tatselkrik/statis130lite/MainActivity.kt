@@ -140,6 +140,12 @@ private fun StatisticsApp(model: AnalysisViewModel) {
     }
     val saveHtml = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/html")) { uri -> model.finishExport(resolver, uri) }
     val savePdf = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri -> model.finishExport(resolver, uri) }
+    val saveProject = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(OMV_MIME)) { uri ->
+        model.finishExport(resolver, uri)
+    }
+    val exportProject: () -> Unit = {
+        scope.launch { if (model.prepareExport(ExportKind.PROJECT)) saveProject.launch("pocketomv-project.omv") }
+    }
     LaunchedEffect(state.message) {
         state.message?.let {
             snackbar.showSnackbar(it)
@@ -152,6 +158,7 @@ private fun StatisticsApp(model: AnalysisViewModel) {
         }
     }
     ExcelImportDialog(model)
+    OmvImportDialog(model)
     Scaffold(
         modifier = Modifier.fillMaxSize().imePadding(),
         topBar = {
@@ -222,13 +229,14 @@ private fun StatisticsApp(model: AnalysisViewModel) {
             key(state.page) {
                 when (state.page) {
                     AppPage.DATA -> DataScreen(state, model,
-                        onImport = { openData.launch(arrayOf(EXCEL_MIME, "text/*", "application/csv",
-                            "application/vnd.ms-excel", "application/octet-stream")) },
+                        // Some Android storage providers assign .omv an unknown MIME type.
+                        onImport = { openData.launch(arrayOf("*/*")) },
                         onSave = {
                             scope.launch {
                                 if (model.prepareExport(ExportKind.DATA)) saveData.launch("pocketomv-data.csv")
                             }
                         },
+                        onSaveProject = exportProject,
                     )
                     AppPage.ANALYSIS -> AnalysisScreen(state, model) {
                         focus.clearFocus()
@@ -258,6 +266,7 @@ private fun StatisticsApp(model: AnalysisViewModel) {
                         },
                         onSaveHtml = { scope.launch { if (model.prepareExport(ExportKind.HTML)) saveHtml.launch("pocketomv-results.html") } },
                         onSavePdf = { scope.launch { if (model.prepareExport(ExportKind.PDF)) savePdf.launch("pocketomv-results.pdf") } },
+                        onSaveProject = exportProject,
                     )
                 }
             }
@@ -271,6 +280,7 @@ private fun DataScreen(
     model: AnalysisViewModel,
     onImport: () -> Unit,
     onSave: () -> Unit,
+    onSaveProject: () -> Unit,
 ) {
     val enabled = state.busy == null
     LazyColumn(
@@ -278,10 +288,10 @@ private fun DataScreen(
         contentPadding = PaddingValues(20.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
-        item { PageHeading("YOUR DATA", "Start with a table", "Enter a few rows or open an Excel, CSV or TSV file from your phone.") }
+        item { PageHeading("YOUR DATA", "Start with a table", "Enter data or open a jamovi, Excel, CSV or TSV file.") }
         item {
             Panel {
-                Button(onClick = onImport, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text("Open Excel / CSV / TSV") }
+                Button(onClick = onImport, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text("Open .omv / Excel / CSV / TSV") }
                 OutlinedButton(onClick = model::loadExample, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
                     Text("Try fictional data")
                 }
@@ -332,9 +342,13 @@ private fun DataScreen(
                         modifier = Modifier.fillMaxWidth()) { Text("Save data as CSV") }
                 }
             }
+            item {
+                OutlinedButton(onClick = onSaveProject, enabled = enabled && !state.hasUnappliedChanges,
+                    modifier = Modifier.fillMaxWidth()) { Text("Save jamovi project (.omv)") }
+            }
         }
         item {
-            Text("Use a dot for decimal values. Blanks, NA, N/A and NaN are treated as missing in numeric columns. Your current work is saved automatically on this device. Export CSV data or a text report to keep a separate file.",
+            Text("Use a dot for decimal values. Blanks, NA, N/A and NaN are treated as missing in numeric columns. Your current work is saved automatically on this device.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
@@ -473,6 +487,7 @@ private fun ResultsScreen(
     onSave: () -> Unit,
     onSaveHtml: () -> Unit,
     onSavePdf: () -> Unit,
+    onSaveProject: () -> Unit,
 ) {
     val result = state.result
     LazyColumn(
@@ -557,6 +572,8 @@ private fun ResultsScreen(
                     }
                     OutlinedButton(onClick = onSaveHtml, enabled = state.busy == null, modifier = Modifier.fillMaxWidth()) { Text("Save report as HTML") }
                     OutlinedButton(onClick = onSavePdf, enabled = state.busy == null, modifier = Modifier.fillMaxWidth()) { Text("Save report as PDF") }
+                    OutlinedButton(onClick = onSaveProject, enabled = state.busy == null && !state.hasUnappliedChanges,
+                        modifier = Modifier.fillMaxWidth()) { Text("Save jamovi project (.omv)") }
                     TextButton(onClick = { model.navigate(AppPage.ANALYSIS) }, enabled = state.busy == null,
                         modifier = Modifier.fillMaxWidth()) { Text("Edit analysis") }
                 }
@@ -586,7 +603,7 @@ private fun DatasetSummary(state: AnalysisScreenState) {
         Text(state.source, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
         if (state.fictional) Text("Fictional practice data", style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.primary)
-        if (state.preparationNotes.isNotEmpty()) Text("Scoring history is available in Data and in reports.",
+        if (state.preparationNotes.isNotEmpty()) Text("Data preparation notes are available in the cell editor and in reports.",
             style = MaterialTheme.typography.bodySmall)
     }
 }

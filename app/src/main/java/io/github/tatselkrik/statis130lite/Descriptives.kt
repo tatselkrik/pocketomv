@@ -60,8 +60,9 @@ internal object Descriptives {
         request.weight?.let { require(it in data.columns.indices && it !in selected) { "Choose a separate numeric weight column." } }
         require(!request.showBarChart || !request.descriptiveNumeric) { "Choose Categories / text for a frequency bar chart." }
         val groups: List<Pair<String?, List<Int>>> = request.splitBy?.let { column ->
-            data.rows.indices.filter { data.rows[it][column].isNotBlank() }
-                .groupBy { data.rows[it][column].trim() }.toSortedMap().map { it.key to it.value }
+            val groups = data.rows.indices.filter { data.rows[it][column].isNotBlank() }
+                .groupBy { data.rows[it][column].trim() }
+            data.orderedCategories(column, groups.keys, numericSort = false).map { it to groups.getValue(it) }
         } ?: listOf(null to data.rows.indices.toList())
         require(groups.isNotEmpty()) { "The group column needs at least one non-blank value." }
         require(groups.size <= 40 && groups.size * selected.size <= 200) {
@@ -73,7 +74,7 @@ internal object Descriptives {
         val qq = ArrayList<NormalQQPlot>()
         val allNotes = linkedSetOf<String>()
         for ((group, rows) in groups) {
-            val groupData = CourseData(data.columns, rows.map { data.rows[it] })
+            val groupData = data.copy(rows = rows.map { data.rows[it] })
             for (column in selected) {
                 val valid = groupData.rows.count { row -> if (request.descriptiveNumeric) !row[column].isMissingNumber() else row[column].isNotBlank() }
                 val summary = if (valid == 0 && multiple) {
@@ -98,7 +99,8 @@ internal object Descriptives {
                 val raw = row[column].trim()
                 if (request.descriptiveNumeric) raw.takeUnless { it.isMissingNumber() }?.toDoubleOrNull()?.takeIf(Double::isFinite)?.let(::descriptiveValue)
                 else raw.takeIf(String::isNotEmpty)
-            }.distinct().let { labels -> if (request.descriptiveNumeric) labels.sortedBy(String::toDouble) else labels.sorted() } }
+            }.distinct().let { labels -> if (request.descriptiveNumeric) labels.sortedBy(String::toDouble)
+                else data.orderedCategories(column, labels, numericSort = false) } }
             val zeroFilledSize = byVariable.entries.sumOf { (variable, indices) -> indices.size.toLong() * levels.getValue(variable).size }
             val fillZeros = zeroFilledSize <= MAX_ZERO_FILLED_FREQUENCIES
             for ((variable, indices) in byVariable) {
@@ -127,7 +129,8 @@ internal object Descriptives {
         if (multiple) allNotes.add("Each variable is summarized using its own non-missing observations within each group. Included rows have at least one selected value; see each variable's N.")
         request.splitBy?.let { column ->
             val missingGroups = data.rows.count { it[column].isBlank() }
-            allNotes.add("Split by ${data.columns[column]}; groups are ordered alphabetically by their stored labels. $missingGroups rows with blank group labels are excluded. Literal NA labels remain groups.")
+            val order = if (data.columnMetadata[column]?.levels.isNullOrEmpty()) "alphabetically by label" else "by saved category order"
+            allNotes.add("Split by ${data.columns[column]}; groups are ordered $order. $missingGroups rows with blank group labels are excluded. Literal NA labels remain groups.")
         }
         return AnalysisResult(AnalysisMethod.DESCRIPTIVES,
             if (multiple || request.splitBy != null) "Descriptive summaries by variable and group" else if (request.descriptiveNumeric) "Numeric summaries and distribution" else "Category frequencies and mode",
@@ -142,8 +145,11 @@ internal object Descriptives {
             require(request.weight == null) { "Weighted mean requires a numeric variable." }
             val values = data.rows.map { it[request.first].trim() }.filter(String::isNotBlank)
             require(values.isNotEmpty()) { "Select a variable with at least one non-missing value." }
-            val counts = values.groupingBy { it }.eachCount().toSortedMap()
-            val frequencies = counts.map { (value, count) -> ValueFrequency(value, count, count * 100.0 / values.size) }
+            val counts = values.groupingBy { it }.eachCount()
+            val frequencies = data.orderedCategories(request.first, counts.keys, numericSort = false).map { value ->
+                val count = counts.getValue(value)
+                ValueFrequency(value, count, count * 100.0 / values.size)
+            }
             return result(data, request, frequencies, values.size, numeric = null,
                 notes = listOf("Category summaries count non-blank values. Text such as NA is kept as a category.",
                     "Percentages use non-missing observations. Each data row is counted once."))
